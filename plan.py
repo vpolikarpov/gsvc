@@ -25,6 +25,21 @@ class WorkPlan:
                     return mid, idx
         return -1, -1
 
+    def get_random_task(self):
+        n = self.count_tasks()
+        n1 = randrange(n)
+        for mid, chain in self.chains.items():
+            for idx, tid in enumerate(chain):
+                if n1 == 0:
+                    return tid, mid, idx
+                n1 -= 1
+
+    def find_task(self, task_id):
+        for mid, chain in self.chains.items():
+            for idx, tid in enumerate(chain):
+                if task_id == tid:
+                    return mid, idx
+
     def create_chain(self, machine_id):
         self.chains[machine_id] = []
         return self.chains[machine_id]

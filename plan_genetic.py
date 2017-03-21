@@ -1,5 +1,5 @@
 from deap import base, creator, tools, algorithms
-from random import randint, getrandbits, choice, shuffle
+from random import randint, getrandbits, choice, shuffle, randrange
 from plan import WorkPlan
 from plan_simple import make_plan as pl_simple
 
@@ -90,8 +90,9 @@ def mate(cls, plan1, plan2):
     return ch1, ch2
 
 
-def mutate(machines, tasks, plan, max_exchanges):
+def mutate(machines, tasks, plan, max_exchanges, max_moves):
     exchanges = randint(1, max_exchanges) if max_exchanges > 1 else 1
+    moves = randint(1, max_moves) if max_moves > 1 else 1
 
     n = plan.count_tasks()
     if n < 2:
@@ -100,30 +101,26 @@ def mutate(machines, tasks, plan, max_exchanges):
     for i in range(exchanges):
 
         # Select and find first task
-        n1 = randint(1, n)
-        for mid, chain in plan.chains.items():
-            for idx, tid in enumerate(chain):
-                n1 -= 1
-                if n1 == 0:
-                    chain_1 = chain
-                    tid_1 = tid
-                    idx_1 = idx
-                    mid_1 = mid
+        tid_1, mid_1, idx_1 = plan.get_random_task()
+        chain_1 = plan.chains[mid_1]
 
-        machine = None
+        machine_1 = None
         for m in machines:
             if m.id == mid_1:
-                machine = m
+                machine_1 = m
                 break
 
-        task = None
+        task_1 = None
         for t in tasks:
             if t.id == tid_1:
-                task = t
+                task_1 = t
                 break
 
-        # Get jobs from machines that can contain first task
-        m_fit = [m for m in machines if m.check_task_clean(task)]
+        if machine_1 is None or task_1 is None:
+            raise ValueError
+
+        # Get jobs from machines that can contain task_1
+        m_fit = [m for m in machines if m.check_task_clean(task_1)]
         chains_fit = [plan.chains[m.id] for m in m_fit if m.id in plan.chains]
         tid_fit = [task for chain in chains_fit for task in chain]
 
@@ -134,7 +131,7 @@ def mutate(machines, tasks, plan, max_exchanges):
         tid_fit_2 = []
         for tid in tid_fit:
             for t in tasks:
-                if t.id == tid and machine.check_task_clean(t):
+                if t.id == tid and machine_1.check_task_clean(t):
                     tid_fit_2.append(tid)
 
         if len(tid_fit_2) == 0:
@@ -143,24 +140,47 @@ def mutate(machines, tasks, plan, max_exchanges):
 
         # Find second item
         tid_2 = choice(tid_fit_2)
-
-        for _, chain in plan.chains.items():
-            for idx, tid in enumerate(chain):
-                if tid_2 == tid:
-                    chain_2 = chain
-                    idx_2 = idx
+        mid_2, idx_2 = plan.find_task(tid_2)
+        chain_2 = plan.chains[mid_2]
 
         # Replace
         chain_1[idx_1] = tid_2
         chain_2[idx_2] = tid_1
 
+    for i in range(moves):
+
+        tid_1, mid_1, idx_1 = plan.get_random_task()
+        chain_1 = plan.chains[mid_1]
+
+        task_1 = None
+        for t in tasks:
+            if t.id == tid_1:
+                task_1 = t
+                break
+
+        if task_1 is None:
+            raise ValueError
+
+        m_ids = [m.id for m in machines if m.check_task_clean(task_1)]
+        mid_2 = choice(m_ids)
+        if mid_2 in plan.chains:
+            chain_2 = plan.chains[mid_2]
+        else:
+            chain_2 = plan.create_chain(mid_2)
+
+        n = len(chain_2)
+        idx_2 = randrange(n) if n > 0 else 0
+
+        del chain_1[idx_1]
+        chain_2.insert(idx_2, tid_1)
+
     return plan,
 
 
-def evaluate(machines, tasks, plan):
+def evaluate(machines_all, tasks, plan):
 
     # Clone active machines
-    machines = [machine.clone() for machine in machines if machine.id in plan.chains]
+    machines = [machine.clone() for machine in machines_all if machine.id in plan.chains]
 
     max_time = 0
     cost = 0
@@ -169,10 +189,11 @@ def evaluate(machines, tasks, plan):
         mid = machine.id
 
         next_task = None
-        next_task_id = plan.chains[machine.id][0]
-        for task in tasks:
-            if task.id == next_task_id:
-                next_task = task
+        if len(plan.chains[machine.id]) > 0:
+            next_task_id = plan.chains[machine.id][0]
+            for task in tasks:
+                if task.id == next_task_id:
+                    next_task = task
 
         i = 0
         time = 0
@@ -208,7 +229,7 @@ def evaluate(machines, tasks, plan):
                 break
 
     # Cost for fixed machines
-    for machine in machines:
+    for machine in machines_all:
         if machine.fixed:
             cost += machine.cost * max_time
 
@@ -225,7 +246,7 @@ def make_plan(machines, tasks):
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
     toolbox.register("mate", mate, creator.WorkPlan)
-    toolbox.register("mutate", mutate, machines, tasks, max_exchanges=1)
+    toolbox.register("mutate", mutate, machines, tasks, max_exchanges=1, max_moves=1)
     toolbox.register("select", tools.selTournament, tournsize=3)
     toolbox.register("evaluate", evaluate, machines, tasks)
 

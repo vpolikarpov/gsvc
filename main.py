@@ -1,6 +1,7 @@
-from random import randint, random, randrange, choice
+from random import randint, random, choice
 from itertools import count
 import argparse
+import time
 
 from plan import WorkPlan
 from logger import TaskLogger
@@ -22,12 +23,12 @@ verbosity = 0
 class Task:
     _ids = count(0)
 
-    def __init__(self, memory, disk, cpu, time):
+    def __init__(self, memory, disk, cpu, time_total):
         self.id = self._ids.__next__()
         self.memory = memory    # 1 - 64
         self.disk = disk        # 0 - 16
         self.cpu = cpu          # 1 - 64
-        self.time_total = time
+        self.time_total = time_total
 
         print_log(1, "New task #%d: cpu = %2d, time = %3d" % (self.id, self.cpu, self.time_total))
 
@@ -70,15 +71,15 @@ class TasksPool:
 class Machine:
     _ids = count(0)
 
-    def __init__(self, m, d, c, mid=None):
+    def __init__(self, memory, disk, cpu, mid=None):
         if mid is None:
             self.id = self._ids.__next__()
         else:
             self.id = mid
 
-        self.memory = self.memory_free = m
-        self.disk = self.disk_free = d
-        self.cpu = self.cpu_free = c
+        self.memory = self.memory_free = memory
+        self.disk = self.disk_free = disk
+        self.cpu = self.cpu_free = cpu
 
         self.workload = []
         self.done = []
@@ -210,7 +211,7 @@ class Cluster:
         exited = False
         for machine in self.machines:
             exited = exited or machine.go()
-        self.idle = all(m.idle for m in self.machines)
+        self.idle = all(machine.idle for machine in self.machines)
         self.time += 1
         return exited
 
@@ -275,7 +276,8 @@ class Scheduler:
         while len(self.tp.tasks) > 0 or not cluster.idle:
 
             if ready:
-                print_log(1, "Time: %8d; Tasks cnt: %d + %d" % (self.cluster.time, len(self.tp.tasks), cluster.get_tasks_cnt()))
+                print_log(1, "Time: %8d; Tasks cnt: %d + %d" %
+                          (self.cluster.time, len(self.tp.tasks), cluster.get_tasks_cnt()))
                 self.run_tasks(plan_generator)
                 ready = False
 
@@ -303,8 +305,6 @@ class Scheduler:
             if self.cluster.check_machines():
                 ready = True
                 self.plan_outdated = True
-
-        print_log(1, "Time: %8d; Tasks cnt: %d + %d" % (self.cluster.time, len(self.tp.tasks), cluster.get_tasks_cnt()))
 
         price = 0
         for machine in self.cluster.machines:
@@ -340,8 +340,9 @@ if __name__ == "__main__":
         print("Unknown algorithm name")
         exit(1)
 
-    time_sum = 0
+    cl_time_sum = 0
     cost_sum = 0
+    time_sum = 0
     repeat = args.repeat
 
     for r in range(repeat):
@@ -355,14 +356,17 @@ if __name__ == "__main__":
 
         scheduler = Scheduler(task_pool, cluster)
 
-        time, cost = scheduler.loop(algorithm)
-        print_log(0, "#%3d: Time: %8d; Cost: %8d" % (r, time, cost))
-        time_sum += time
+        start = time.time()
+        cl_time, cost = scheduler.loop(algorithm)
+        end = time.time()
+        print_log(0, "#%3d: Time: %8d; Cost: %8d; Time: %5.2f" % (r, cl_time, cost, end - start))
+        cl_time_sum += cl_time
         cost_sum += cost
+        time_sum += end - start
 
         scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
         if repeat == 1 and args.draw:
             scheduler.logger.draw_all()
 
-    print_log(0, "Avg time: %8d; avg cost: %8d" % (time_sum/repeat, cost_sum/repeat))
-
+    print_log(0, "Avg cluster time: %8d; avg cost: %8d; avg time: %5.2f" %
+              (cl_time_sum/repeat, cost_sum/repeat, time_sum/repeat))
