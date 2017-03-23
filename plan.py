@@ -4,6 +4,7 @@ from random import randrange
 class WorkPlan:
     def __init__(self, plan=None):
         self.chains = {}
+        self.fitness_cache = {}
         if plan:
             for mid, chain in plan.chains.items():
                 self.append_to_chain(mid, chain[:])

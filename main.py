@@ -103,8 +103,8 @@ class Machine:
             return True
 
     def run_task(self, task):
-        if not self.check_task(task):
-            raise Exception("Task #%d does not fit machine #%d" % (task.id, self.id))
+        # if not self.check_task(task):
+        #    raise ValueError("Task #%d does not fit machine #%d" % (task.id, self.id))
         self.workload.append({"task": task, "time_left": task.time_total})
         self.update_free_resources()
 
@@ -228,7 +228,7 @@ class Scheduler:
 
     def run_tasks(self, gen):
         if self.plan_outdated:
-            self.plan = gen(self.cluster.machines, self.tp.tasks)
+            self.plan = gen(self.cluster.machines, self.tp.tasks, self.plan)
             self.plan_outdated = False
 
         plan = self.plan
