@@ -2,6 +2,8 @@ from random import randint, random, choice
 from itertools import count
 import argparse
 import time
+from statistics import mean, variance
+from math import sqrt
 
 from plan import WorkPlan
 from logger import TaskLogger
@@ -10,7 +12,7 @@ from plan_genetic import make_plan as pl_genetic
 from plan_simple import make_plan as pl_simple
 
 TIME_MAX = 100
-TASKS_LIMIT = 300  # 0 - no limit
+TASKS_LIMIT = 1  # 0 - no limit
 
 
 def print_log(level, text):
@@ -125,7 +127,7 @@ class Machine:
             self.idle = False
 
     def go(self):
-        if not self.idle:
+        if not self.idle or self.fixed:
             self.price += self.cost
 
         exited = False
@@ -141,6 +143,8 @@ class Machine:
 
     def clone(self):
         new = self.__class__(self.memory, self.disk, self.cpu, mid=self.id)
+
+        new.fixed = self.fixed
 
         for task in self.workload:
             new.workload.append(task)
@@ -340,9 +344,9 @@ if __name__ == "__main__":
         print("Unknown algorithm name")
         exit(1)
 
-    cl_time_sum = 0
-    cost_sum = 0
-    time_sum = 0
+    cl_times = []
+    costs = []
+    times = []
     repeat = args.repeat
 
     for r in range(repeat):
@@ -360,13 +364,16 @@ if __name__ == "__main__":
         cl_time, cost = scheduler.loop(algorithm)
         end = time.time()
         print_log(0, "#%3d: Time: %8d; Cost: %8d; Time: %5.2f" % (r, cl_time, cost, end - start))
-        cl_time_sum += cl_time
-        cost_sum += cost
-        time_sum += end - start
+        cl_times.append(cl_time)
+        costs.append(cost)
+        times.append(end - start)
 
         scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
         if repeat == 1 and args.draw:
             scheduler.logger.draw_all()
 
-    print_log(0, "Avg cluster time: %8d; avg cost: %8d; avg time: %5.2f" %
-              (cl_time_sum/repeat, cost_sum/repeat, time_sum/repeat))
+    print_log(0, "---------------------")
+    print_log(0, "Mean cluster time: %8d; mean cost: %8d; mean time: %5.2f" %
+              (mean(cl_times), mean(costs), mean(times)))
+    print_log(0, "         variance: %8d;  variance: %8d;  variance: %5.2f" %
+              (sqrt(variance(cl_times)), sqrt(variance(costs)), sqrt(variance(times))))

@@ -1,8 +1,10 @@
 from deap import base, creator, tools, algorithms
 from random import randint, getrandbits, choice, shuffle, randrange
 from plan import WorkPlan
-from plan_simple import make_plan as pl_simple
-
+from plan_simple import make_one_plan as pl_simple
+from functools import reduce
+from itertools import zip_longest
+from time import time as get_time
 
 def with_next(iterable):
     iterator = iter(iterable)
@@ -224,75 +226,7 @@ def mutate(machines, tasks, plan, max_exchanges, max_moves):
 
 
 def evaluate(machines_all, tasks, plan):
-
-    # Clone active machines
-    machines = [machine.clone() for machine in machines_all if machine.id in plan.chains]
-
-    max_time = 0
-    sum_cost = 0
-
-    for machine in machines:
-        mid = machine.id
-
-        i = 0
-        time = 0
-        cost = 0
-
-        if mid in plan.fitness_cache:
-            time, cost = plan.fitness_cache[mid]
-        else:
-            next_task = None
-            if len(plan.chains[machine.id]) > 0:
-                next_task_id = plan.chains[machine.id][0]
-                for task in tasks:
-                    if task.id == next_task_id:
-                        next_task = task
-
-            while True:
-
-                # Trying to run as more jobs as possible
-                while next_task is not None:
-                    if machine.check_task(next_task):
-                        machine.run_task(next_task)
-                        i += 1
-
-                        next_task = None
-                        try:
-                            next_task_id = plan.chains[mid][i]
-                        except IndexError:
-                            break
-                        for task in tasks:
-                            if task.id == next_task_id:
-                                next_task = task
-                    else:
-                        break
-
-                # Go
-                if not machine.idle:
-                    time_shift = min((task["time_left"] for task in machine.workload))
-                    for task in machine.workload:
-                        task["time_left"] -= time_shift
-                        if task["time_left"] <= 0:
-                            machine.workload.remove(task)
-                    machine.update_free_resources()
-                    time += time_shift
-
-                if machine.idle and next_task is None:
-                    cost = machine.cost * time
-                    plan.fitness_cache[mid] = (time, cost)
-                    break
-
-        max_time = max(max_time, time)
-        if not machine.fixed:  # Cost for fixed machines depends from max_time, so we calculate it later
-            sum_cost += cost
-
-    # Cost for fixed machines
-    for machine in machines_all:
-        if machine.fixed:
-            sum_cost += machine.cost * max_time
-    # Should we assume zero cost for fixed machines?
-
-    return max_time, sum_cost
+    return plan.evaluate(machines_all, tasks)
 
 
 def make_plan(machines, tasks, old_plan):
@@ -309,15 +243,28 @@ def make_plan(machines, tasks, old_plan):
     toolbox.register("select", tools.selTournament, tournsize=3)
     toolbox.register("evaluate", evaluate, machines, tasks)
 
-    NGEN = 1
-    MU = 2
-    LAMBDA = 2
+    NGEN = 100
+    MU = 10
+    LAMBDA = 20
     CXPB = 0.7
     MUTPB = 0.2
 
     pop = toolbox.population(n=MU)
-    hof = tools.ParetoFront()
+    hof = tools.HallOfFame(1)
 
-    algorithms.eaMuPlusLambda(pop, toolbox, MU, LAMBDA, CXPB, MUTPB, NGEN, halloffame=hof, verbose=False)
+    stats = tools.Statistics(key=lambda ind: ind.fitness)
+    stats.register("min", reduce, lambda x, y: x if x.dominates(y) else y)
+
+    cpu_time = get_time()
+    pop, logbook = algorithms.eaMuPlusLambda(pop, toolbox, MU, LAMBDA, CXPB, MUTPB, NGEN,
+                                             halloffame=hof, stats=stats, verbose=False)
+    cpu_time = get_time() - cpu_time
+
+    f_init = logbook[0]['min'].values
+    f_res = logbook[NGEN]['min'].values
+
+    prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init,f_res)]
+
+    print("%6.2f, %6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], prct[1], len(tasks), cpu_time))
 
     return hof.items[0]

@@ -1,10 +1,15 @@
 from random import randrange
 
+from time import time as get_time
+time_1 = time_2 = time_3 = 0
+
 
 class WorkPlan:
     def __init__(self, plan=None):
         self.chains = {}
         self.fitness_cache = {}
+        self.time = 0
+        self.cost = 0
         if plan:
             for mid, chain in plan.chains.items():
                 self.append_to_chain(mid, chain[:])
@@ -98,6 +103,124 @@ class WorkPlan:
 
         return True
 
+    def evaluate(self, machines_all, tasks):
+        # Clone active machines
+        machines = [machine for machine in machines_all if machine.id in self.chains]
+
+        max_time = 0
+        sum_cost = 0
+
+        global time_1, time_2, time_3
+
+        for machine in machines:
+
+            mid = machine.id
+
+            i = 0
+            time = 0
+            cost = 0
+
+            res_release = []
+            res = {
+                "cpu": machine.cpu_free,
+                "memory": machine.memory_free,
+                "disk": machine.disk_free,
+            }
+
+            for task in machine.workload:
+                res_release.append({"time": task["time_left"], "res": {
+                    "cpu": task["task"].cpu,
+                    "memory": task["task"].memory,
+                    "disk": task["task"].disk,
+                }})
+                res_release.sort(key=lambda x: x["time"])
+
+            if mid in self.fitness_cache:
+                time, cost = self.fitness_cache[mid]
+            else:
+                next_task = None
+                if len(self.chains[mid]) > 0:
+                    next_task_id = self.chains[mid][0]
+                    for task in tasks:
+                        if task.id == next_task_id:
+                            next_task = task
+
+                while True:
+
+                    time_0 = get_time()
+
+                    # Trying to run as more jobs as possible
+                    while next_task is not None:
+                        if next_task.cpu > res["cpu"] or next_task.memory > res["memory"] or next_task.disk > res["disk"]:
+                            break
+                        else:
+                            i += 1
+
+                            j = 0
+                            j_max = len(res_release)
+                            time_end = time + next_task.time_total
+                            while j < j_max and res_release[j]["time"] < time_end:
+                                j += 1
+                            res_release.insert(j, {
+                                "time": time_end,
+                                "res": {
+                                    "cpu": next_task.cpu,
+                                    "memory": next_task.memory,
+                                    "disk": next_task.disk,
+                                }
+                            })
+
+                            res["cpu"] -= next_task.cpu
+                            res["memory"] -= next_task.memory
+                            res["disk"] -= next_task.disk
+
+                            next_task = None
+                            try:
+                                next_task_id = self.chains[mid][i]
+                            except IndexError:
+                                break
+                            for task in tasks:
+                                if task.id == next_task_id:
+                                    next_task = task
+
+                    time_1 += get_time() - time_0
+                    time_0 = get_time()
+
+                    # Go
+                    try:
+                        time = res_release[0]["time"]
+                        res["cpu"] += res_release[0]["res"]["cpu"]
+                        res["memory"] += res_release[0]["res"]["memory"]
+                        res["disk"] += res_release[0]["res"]["disk"]
+
+                        del res_release[0]
+                        idle = False
+                    except IndexError:
+                        idle = True
+
+                    time_2 += get_time() - time_0
+                    time_0 = get_time()
+
+                    if idle and next_task is None:
+                        cost = machine.cost * time
+                        self.fitness_cache[mid] = (time, cost)
+                        break
+
+            max_time = max(max_time, time)
+            if not machine.fixed:  # Cost for fixed machines depends from max_time, so we calculate it later
+                sum_cost += cost
+
+        # Cost for fixed machines
+        for machine in machines_all:
+            if machine.fixed:
+                sum_cost += machine.cost * max_time
+        # Should we assume zero cost for fixed machines?
+
+        self.time = max_time
+        self.cost = sum_cost
+
+        return max_time, sum_cost
+
     def randomize(self, machines, tasks):
         for task in tasks:
             ma_list = []  # available machines
@@ -110,3 +233,7 @@ class WorkPlan:
                 mid = ma_list[randrange(len(ma_list))].id
 
             self.append_to_chain(mid, task.id)
+
+
+def print_time():
+    print("%f, %f, %f" % (time_1, time_2, time_3))
