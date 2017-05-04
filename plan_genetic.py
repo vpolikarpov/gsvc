@@ -1,7 +1,7 @@
 from deap import base, creator, tools, algorithms
 from random import randint, getrandbits, choice, shuffle, randrange
-from plan import WorkPlan
-from plan_simple import make_one_plan as pl_simple
+from plan import WorkPlan, PlanGenerator
+from plan_simple import SimpleGenerator
 from functools import reduce
 from itertools import zip_longest
 from time import time as get_time
@@ -21,40 +21,11 @@ def random_plan(cls, machines, tasks):
     return wp
 
 
-def pseudo_random_plan(cls, machines, tasks, prev_plan):
-
-    use_old_plan = True
-    if prev_plan is None or len(machines) != len(prev_plan.chains):
-        use_old_plan = False
-
-    for machine in machines:
-        if machine.id not in prev_plan.chains:
-            use_old_plan = False
-
-    if bool(getrandbits(1)):
-        use_old_plan = False
-
-    if use_old_plan:
-        wp = prev_plan
-        for task in tasks:
-            if wp.get_task_pos(task.id) != (-1, -1):
-                continue
-
-            m_ids = [m.id for m in machines if m.check_task_clean(task)]
-            mid = choice(m_ids)
-            if mid in wp.chains:
-                chain = wp.chains[mid]
-            else:
-                chain = wp.create_chain(mid)
-
-            n = len(chain)
-            idx = randrange(n) if n > 0 else 0
-
-            chain.insert(idx, task.id)
-    else:
-        machines = machines[:]
-        shuffle(machines)
-        wp = cls(pl_simple(machines, tasks))
+def simple_plan(cls, machines, tasks):
+    machines = machines[:]
+    shuffle(machines)
+    sg = SimpleGenerator(machines, tasks)
+    wp = cls(sg.make_one_plan())
     return wp
 
 
@@ -229,42 +200,217 @@ def evaluate(machines_all, tasks, plan):
     return plan.evaluate(machines_all, tasks)
 
 
-def make_plan(machines, tasks, old_plan):
+def expand_plan(machines, tasks, plan, new_tasks):
+    machines = [machine.clone() for machine in machines]
+    machines = [m for m in machines if m.fixed] + [m for m in machines if not m.fixed]
+    tasks = tasks[:]
 
-    creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
-    creator.create("WorkPlan", WorkPlan, fitness=creator.FitnessMin)
+    try:
+        if len(new_tasks) == 0:
+            return
+    except TypeError:
+        new_tasks = [new_tasks]
 
-    toolbox = base.Toolbox()
-    toolbox.register("individual", pseudo_random_plan, creator.WorkPlan, machines, tasks, old_plan)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+    ind = {}
+    for machine in machines:
+        mid = machine.id
+        ind[mid] = 0
 
-    toolbox.register("mate", mate, creator.WorkPlan)
-    toolbox.register("mutate", mutate, machines, tasks, max_exchanges=1, max_moves=1)
-    toolbox.register("select", tools.selTournament, tournsize=3)
-    toolbox.register("evaluate", evaluate, machines, tasks)
+    while True:
 
-    NGEN = 100
-    MU = 10
-    LAMBDA = 20
-    CXPB = 0.7
-    MUTPB = 0.2
+        for machine in machines:
 
-    pop = toolbox.population(n=MU)
-    hof = tools.HallOfFame(1)
+            machine.reserve()
+            mid = machine.id
 
-    stats = tools.Statistics(key=lambda ind: ind.fitness)
-    stats.register("min", reduce, lambda x, y: x if x.dominates(y) else y)
+            next_task = None
+            try:
+                next_task_id = plan.chains[mid][ind[mid]]
+                for task in tasks:
+                    if task.id == next_task_id:
+                        next_task = task
+            except (IndexError, KeyError):
+                pass
 
-    cpu_time = get_time()
-    pop, logbook = algorithms.eaMuPlusLambda(pop, toolbox, MU, LAMBDA, CXPB, MUTPB, NGEN,
-                                             halloffame=hof, stats=stats, verbose=False)
-    cpu_time = get_time() - cpu_time
+            while next_task is not None:
+                if machine.check_task(next_task):
+                    machine.run_task(next_task)
+                    ind[mid] += 1
 
-    f_init = logbook[0]['min'].values
-    f_res = logbook[NGEN]['min'].values
+                    next_task = None
+                    try:
+                        next_task_id = plan.chains[mid][ind[mid]]
+                    except IndexError:
+                        break
+                    for task in tasks:
+                        if task.id == next_task_id:
+                            next_task = task
+                else:
+                    break
 
-    prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init,f_res)]
+            if next_task is None:
+                while len(new_tasks) > 0:
+                    new_task = new_tasks[0]
+                    if machine.check_task(new_task):
+                        machine.run_task(new_task)
+                        plan.append_to_chain(mid, new_task.id)
+                        if mid in plan.fitness_cache:
+                            del plan.fitness_cache[mid]
+                        new_tasks.pop(0)
+                    else:
+                        break
 
-    print("%6.2f, %6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], prct[1], len(tasks), cpu_time))
+        if len(new_tasks) == 0:
+            break
 
-    return hof.items[0]
+        exited = False
+        while not exited:
+            for machine in machines:
+                exited = machine.go() or exited
+
+    if not plan.check_plan(machines, tasks):
+        print("FUCKING SHIT!!!")
+    return
+
+
+NGEN = 100
+MU = 10
+LAMBDA = 20
+CXPB = 0.7
+MUTPB = 0.2
+
+
+class GeneticGenerator (PlanGenerator):
+    def __init__(self, machines, tasks, continuous=False):
+        super().__init__(machines, tasks)
+
+        creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
+        creator.create("WorkPlan", WorkPlan, fitness=creator.FitnessMin)
+
+        self.toolbox = base.Toolbox()
+        self.toolbox.register("individual", simple_plan, creator.WorkPlan, self.machines, self.tasks)
+        self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+
+        self.toolbox.register("mate", mate, creator.WorkPlan)
+        self.toolbox.register("mutate", mutate, self.machines, self.tasks, max_exchanges=1, max_moves=1)
+        self.toolbox.register("select", tools.selTournament, tournsize=3)
+        self.toolbox.register("evaluate", evaluate, self.machines, self.tasks)
+
+        self.continuous = continuous
+        if self.continuous:
+            self.population = self.toolbox.population(n=MU)
+
+    def get_plan(self):
+        if not self.continuous:
+            self.population = self.toolbox.population(n=MU)
+
+        for plan in self.population:
+            if not plan.check_plan(self.machines, self.tasks):
+                print("Shitty generation (start)")
+
+        hof = tools.HallOfFame(1)
+
+        stats = tools.Statistics(key=lambda ind: ind.fitness)
+        stats.register("min", reduce, lambda x, y: x if x.dominates(y) else y)
+
+        cpu_time = get_time()
+        self.population, logbook = algorithms.eaMuPlusLambda(self.population, self.toolbox, MU, LAMBDA, CXPB, MUTPB,
+                                                             NGEN, halloffame=hof, stats=stats, verbose=False)
+        cpu_time = get_time() - cpu_time
+
+        f_init = logbook[0]['min'].values
+        f_res = logbook[NGEN]['min'].values
+
+        prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init, f_res)]
+
+        print("%6.2f, %6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], prct[1], len(self.tasks), cpu_time))
+
+        for plan in self.population:
+            if not plan.check_plan(self.machines, self.tasks):
+                print("Shitty generation (end)")
+
+        return hof.items[0]
+
+    def remove_task(self, task):
+        if self.continuous:
+            for plan in self.population:
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [REMOVE]")
+
+        super().remove_task(task)
+
+        if self.continuous:
+            for plan in self.population:
+                task_pos = plan.find_task(task.id)
+                if task_pos is None:
+                    continue
+                del plan.get_chain(task_pos[0])[task_pos[1]]
+                try:
+                    del plan.fitness_cache[task_pos[0]]
+                except KeyError:
+                    pass
+                del plan.fitness.values
+
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [REMOVE]")
+
+    def add_task(self, task):
+        if self.continuous:
+            for plan in self.population:
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [ADD]")
+
+        super().add_task(task)
+
+        if self.continuous:
+            for plan in self.population:
+                expand_plan(self.machines, self.tasks, plan, task)
+                del plan.fitness.values
+
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [ADD]")
+
+    def remove_machine(self, machine):
+        if self.continuous:
+            for plan in self.population:
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [REMOVE MACHINE]")
+
+        super().remove_machine(machine)
+
+        if self.continuous:
+            mid = machine.id
+            for plan in self.population:
+                if mid in plan.chains:
+                    task_ids = plan.chains[mid]
+                    del plan.chains[mid]
+                    try:
+                        del plan.fitness_cache[mid]
+                    except KeyError:
+                        pass
+                    tasks = []
+                    for tid in task_ids:
+                        for task in self.tasks:
+                            if task.id == tid:
+                                tasks.append(task)
+                    if tasks:
+                        expand_plan(self.machines, self.tasks, plan, tasks)
+                        del plan.fitness.values
+
+        if self.continuous:
+            for plan in self.population:
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [REMOVE MACHINE]")
+
+    def add_machine(self, machine):
+        if self.continuous:
+            for plan in self.population:
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [ADD MACHINE]")
+
+        super().add_machine(machine)
+
+        if self.continuous:
+            for plan in self.population:
+                if not plan.check_plan(self.machines, self.tasks):
+                    print("SHIT [ADD MACHINE]")

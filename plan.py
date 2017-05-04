@@ -237,3 +237,33 @@ class WorkPlan:
 
 def print_time():
     print("%f, %f, %f" % (time_1, time_2, time_3))
+
+
+class PlanGenerator:
+
+    def __init__(self, machines, tasks):
+        self.machines_external = machines[:]
+        self.machines = [machine.clone() for machine in self.machines_external]
+        self.tasks = tasks[:]
+
+    def get_plan(self):
+        return WorkPlan()
+
+    def add_task(self, task):
+        print(" -- Add task # %d" % task.id)
+        self.tasks.append(task)
+
+    def remove_task(self, task):
+        print(" -- Remove task # %d" % task.id)
+        self.tasks.remove(task)
+
+    def add_machine(self, machine):
+        print(" -- Add machine # %d" % machine.id)
+        self.machines_external.append(machine)
+        self.machines.append(machine.clone())
+
+    def remove_machine(self, machine):
+        print(" -- Remove machine # %d" % machine.id)
+        self.machines_external.remove(machine)
+        self.machines[:] = [machine.clone() for machine in self.machines_external]
+        # There is no simple way to just remove cloned machine

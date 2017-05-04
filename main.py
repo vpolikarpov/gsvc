@@ -8,8 +8,8 @@ from math import sqrt
 from plan import WorkPlan
 from logger import TaskLogger
 
-from plan_genetic import make_plan as pl_genetic
-from plan_simple import make_plan as pl_simple
+from plan_genetic import GeneticGenerator
+from plan_simple import SimpleGenerator
 
 TIME_MAX = 100
 TASKS_LIMIT = 1  # 0 - no limit
@@ -43,22 +43,23 @@ class TasksPool:
 
     def check_new_tasks(self):
         if TASKS_LIMIT != 0 and self._tasks_cnt >= TASKS_LIMIT:
-            return False
+            return []
 
         if random() < 0.9:
-            return False
+            return []
 
         cnt = randint(1, 3)
         if cnt == 0:
-            return False
+            return []
 
-        self.add_random_tasks(cnt)
-        return True
+        new = self.add_random_tasks(cnt)
+        return new
 
     def remove_task(self, task):
         self.tasks.remove(task)
 
     def add_random_tasks(self, n):
+        new_tasks = []
         for i in range(n):
             task = Task(
                 randint(1, 64),  # 1 - 64
@@ -66,8 +67,10 @@ class TasksPool:
                 randint(1, 64),
                 randint(10, TIME_MAX),
             )
-            self.tasks.append(task)
+            new_tasks.append(task)
         self._tasks_cnt += n
+        self.tasks += new_tasks
+        return new_tasks
 
 
 class Machine:
@@ -86,8 +89,9 @@ class Machine:
         self.workload = []
         self.done = []
 
-        self.idle = True  # Cluster can revoke machine when it's idle
-        self.fixed = False  # We always pay for fixed machine, but cluster can't revoke such one
+        self.idle = True
+        self.reserved = False  # Cluster can't revoke machine when it's reserved
+        self.fixed = False  # We always pay for fixed machine, but they are always reserved
 
         self.cost = self.cpu
         self.price = 0
@@ -105,10 +109,23 @@ class Machine:
             return True
 
     def run_task(self, task):
+        if not self.reserved:
+            raise ValueError("You should reserve machine first")
+
         # if not self.check_task(task):
         #    raise ValueError("Task #%d does not fit machine #%d" % (task.id, self.id))
+
         self.workload.append({"task": task, "time_left": task.time_total})
         self.update_free_resources()
+
+    def reserve(self):
+        self.reserved = True
+
+    def free(self):
+        if self.fixed:
+            raise ValueError("You cannot free fixed machine")
+        else:
+            self.reserved = False
 
     def update_free_resources(self):
         cpu = mem = disk = 0
@@ -127,7 +144,7 @@ class Machine:
             self.idle = False
 
     def go(self):
-        if not self.idle or self.fixed:
+        if self.reserved:
             self.price += self.cost
 
         exited = False
@@ -145,6 +162,7 @@ class Machine:
         new = self.__class__(self.memory, self.disk, self.cpu, mid=self.id)
 
         new.fixed = self.fixed
+        new.reserved = self.reserved
 
         for task in self.workload:
             new.workload.append(task)
@@ -163,50 +181,61 @@ class Cluster:
     def make_machines(self):
         fm = Machine(64, 32, 128)
         fm.fixed = True
+        fm.reserve()
         self.machines.append(fm)
 
         fm = Machine(32, 32, 32)
         fm.fixed = True
+        fm.reserve()
         self.machines.append(fm)
 
         fm = Machine(128, 20, 64)
         fm.fixed = True
+        fm.reserve()
         self.machines.append(fm)
 
         fm = Machine(64, 128, 16)
         fm.fixed = True
+        fm.reserve()
         self.machines.append(fm)
 
         return 4
 
     def add_random_machines(self, n):
+        new_machines = []
         for i in range(n):
-            task = Machine(
+            machine = Machine(
                 randint(1, 16) * 8,
                 randint(8, 128),
                 randint(2, 32) * 4,
             )
-            self.machines.append(task)
+            new_machines.append(machine)
+        self.machines += new_machines
+        return new_machines
 
-    def check_machines(self):
-        changed = False
+    def check_deleted_machines(self):
+        deleted_machines = []
 
-        if random() >= 0.95:
+        if random() >= 0.98:
             free = []
             for machine in self.machines:
-                if machine.idle and not machine.fixed:
+                if not machine.reserved and not machine.fixed:
                     free.append(machine)
 
             if len(free) > 0:
                 machine = choice(free)
                 self.machines.remove(machine)
-                changed = True
+                deleted_machines.append(machine)
 
-        if random() >= 0.95:
-            self.add_random_machines(1)
-            changed = True
+        return deleted_machines
 
-        return changed
+    def check_new_machines(self):
+        new_machines = []
+
+        if random() >= 0.98:
+            new_machines += self.add_random_machines(1)
+
+        return new_machines
 
     def get_tasks_cnt(self):
         return sum((len(machine.workload) for machine in self.machines))
@@ -221,7 +250,7 @@ class Cluster:
 
 
 class Scheduler:
-    def __init__(self, tp, cl):
+    def __init__(self, tp, cl, gen):
         self.tp = tp
         self.cluster = cl
 
@@ -230,9 +259,11 @@ class Scheduler:
         self.plan = WorkPlan()
         self.plan_outdated = True
 
-    def run_tasks(self, gen):
+        self.generator = gen
+
+    def run_tasks(self):
         if self.plan_outdated:
-            self.plan = gen(self.cluster.machines, self.tp.tasks, self.plan)
+            self.plan = self.generator.get_plan()
             self.plan_outdated = False
 
         plan = self.plan
@@ -246,7 +277,7 @@ class Scheduler:
 
             while len(chain) > 0:
                 next_task = None
-                next_task_id = plan.chains[mid][0]
+                next_task_id = chain[0]
                 for task in self.tp.tasks:
                     if task.id == next_task_id:
                         next_task = task
@@ -259,13 +290,15 @@ class Scheduler:
 
                 del chain[0]
                 self.tp.remove_task(next_task)
+                self.generator.remove_task(next_task)
 
-                if machine.idle:
+                if not machine.reserved:
                     self.logger.machine_works(
                         machine_id=machine.id,
                         time=self.cluster.time,
                         resources={"cpu": machine.cpu, "memory": machine.memory, "disk": machine.disk}
                     )
+                    machine.reserve()
 
                 machine.run_task(next_task)
                 self.logger.task_started(
@@ -275,14 +308,14 @@ class Scheduler:
                     resources={"cpu": next_task.cpu, "memory": next_task.memory, "disk": next_task.disk}
                 )
 
-    def loop(self, plan_generator):
+    def loop(self):
         ready = True
         while len(self.tp.tasks) > 0 or not cluster.idle:
 
             if ready:
-                print_log(1, "Time: %8d; Tasks cnt: %d + %d" %
-                          (self.cluster.time, len(self.tp.tasks), cluster.get_tasks_cnt()))
-                self.run_tasks(plan_generator)
+                print_log(1, "Time: %8d; Tasks cnt: %d; Pending: %d" %
+                          (self.cluster.time, cluster.get_tasks_cnt(), len(self.tp.tasks)))
+                self.run_tasks()
                 ready = False
 
             exited = self.cluster.go()
@@ -296,19 +329,33 @@ class Scheduler:
                             time=self.cluster.time
                         )
                     del machine.done[:]
-                    if machine.idle:
-                        self.logger.machine_idle(
-                            machine_id=machine.id,
-                            time=self.cluster.time
-                        )
+                    if machine.idle and not machine.fixed:
+                        if machine.id not in self.plan.chains or len(self.plan.chains[machine.id]) == 0:
+                            machine.free()
+                            self.logger.machine_idle(
+                                machine_id=machine.id,
+                                time=self.cluster.time
+                            )
 
-            if self.tp.check_new_tasks():
+            deleted_machines = self.cluster.check_deleted_machines()
+            new_machines = self.cluster.check_new_machines()
+            new_tasks = self.tp.check_new_tasks()
+
+            if new_tasks or new_machines or deleted_machines:
                 ready = True
                 self.plan_outdated = True
 
-            if self.cluster.check_machines():
-                ready = True
-                self.plan_outdated = True
+            if deleted_machines:
+                [self.generator.remove_machine(machine) for machine in deleted_machines]
+                print_log(1, "Time: %8d; Deleted machine!" % self.cluster.time)
+
+            if new_machines:
+                [self.generator.add_machine(machine) for machine in new_machines]
+                print_log(1, "Time: %8d; New machine!" % self.cluster.time)
+
+            if new_tasks:
+                [self.generator.add_task(task) for task in new_tasks]
+                print_log(1, "Time: %8d; New tasks!" % self.cluster.time)
 
         price = 0
         for machine in self.cluster.machines:
@@ -322,6 +369,8 @@ if __name__ == "__main__":
 
     parser.add_argument('algorithm', help='("simple" or "genetic")')
 
+    parser.add_argument('-c', '--continuous', dest='genetic_continuous', action='store_true', help='Number of tasks')
+
     parser.add_argument('-t', '--tasks', metavar='T', type=int, default='100', help='Number of tasks')
     parser.add_argument('-m', '--machines', metavar='M', type=int, default='10', help='Number of machines')
 
@@ -334,15 +383,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     verbosity = 2 if args.verbose2 else (1 if args.verbose else 0)
-
-    algorithm = None
-    if args.algorithm == 'genetic':
-        algorithm = pl_genetic
-    elif args.algorithm == 'simple':
-        algorithm = pl_simple
-    else:
-        print("Unknown algorithm name")
-        exit(1)
 
     cl_times = []
     costs = []
@@ -358,10 +398,19 @@ if __name__ == "__main__":
         if m > 0:
             cluster.add_random_machines(m)
 
-        scheduler = Scheduler(task_pool, cluster)
+        generator = None
+        if args.algorithm == 'genetic':
+            generator = GeneticGenerator(cluster.machines, task_pool.tasks, args.genetic_continuous is True)
+        elif args.algorithm == 'simple':
+            generator = SimpleGenerator(cluster.machines, task_pool.tasks)
+        else:
+            print("Unknown algorithm name")
+            exit(1)
+
+        scheduler = Scheduler(task_pool, cluster, generator)
 
         start = time.time()
-        cl_time, cost = scheduler.loop(algorithm)
+        cl_time, cost = scheduler.loop()
         end = time.time()
         print_log(0, "#%3d: Time: %8d; Cost: %8d; Time: %5.2f" % (r, cl_time, cost, end - start))
         cl_times.append(cl_time)
@@ -372,8 +421,9 @@ if __name__ == "__main__":
         if repeat == 1 and args.draw:
             scheduler.logger.draw_all()
 
-    print_log(0, "---------------------")
-    print_log(0, "Mean cluster time: %8d; mean cost: %8d; mean time: %5.2f" %
-              (mean(cl_times), mean(costs), mean(times)))
-    print_log(0, "         variance: %8d;  variance: %8d;  variance: %5.2f" %
-              (sqrt(variance(cl_times)), sqrt(variance(costs)), sqrt(variance(times))))
+    if repeat > 1:
+        print_log(0, "---------------------")
+        print_log(0, "Mean cluster time: %8d; mean cost: %8d; mean time: %5.2f" %
+                  (mean(cl_times), mean(costs), mean(times)))
+        print_log(0, "         variance: %8d;  variance: %8d;  variance: %5.2f" %
+                  (sqrt(variance(cl_times)), sqrt(variance(costs)), sqrt(variance(times))))
