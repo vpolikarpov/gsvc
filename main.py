@@ -12,6 +12,8 @@ from tools import write_log, set_verbosity
 from plan_genetic import GeneticGenerator
 from plan_simple import SimpleGenerator
 
+import yaml
+
 TIME_MAX = 100
 TASKS_LIMIT = 1  # 0 - no limit
 
@@ -361,9 +363,11 @@ class Scheduler:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Segment an image using QR markers')
 
-    parser.add_argument('algorithm', help='("simple" or "genetic")')
+    parser.add_argument('algorithm', help='("simple" or "genetic")', nargs='?', default="simple")
 
-    parser.add_argument('-c', '--continuous', dest='genetic_continuous', action='store_true', help='Number of tasks')
+    parser.add_argument('-C', '--config', help='Configuration file')
+
+    parser.add_argument('-c', '--continuous', dest='genetic_continuous', action='store_true')
 
     parser.add_argument('-t', '--tasks', metavar='T', type=int, default='100', help='Number of tasks')
     parser.add_argument('-m', '--machines', metavar='M', type=int, default='10', help='Number of machines')
@@ -376,28 +380,57 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    verbosity = 2 if args.verbose2 else (1 if args.verbose else 0)
+    if args.config:
+        conf = {}
+        with open(args.config, "r") as f:
+            conf_text = f.read()
+            conf = yaml.load(conf_text)
+
+        machines_cnt = conf.get("machines", 10)
+        tasks_cnt = conf.get("tasks", 100)
+        repeat = conf.get("repeat", 1)
+        verbosity = conf.get("verbosity", 0)
+        draw = conf.get("draw", False)
+
+        alg_info = conf["algorithm"]
+        alg_name = alg_info["name"]
+        alg_settings = alg_info.get("settings", {})
+
+    else:
+        machines_cnt = args.machines
+        tasks_cnt = args.tasks
+        repeat = args.repeat
+        verbosity = 2 if args.verbose2 else (1 if args.verbose else 0)
+        draw = args.draw
+
+        alg_name = args.algorithm
+        alg_settings = {}
+        if args.genetic_continuous:
+            alg_settings["continuous"] = True
+
+    if repeat > 1 and draw is True:
+        raise RuntimeError("Cannot draw result when repeating multiple times")
+
     set_verbosity(verbosity)
 
     cl_times = []
     costs = []
     times = []
-    repeat = args.repeat
 
     for r in range(repeat):
         task_pool = TasksPool()
-        task_pool.add_random_tasks(args.tasks)
+        task_pool.add_random_tasks(tasks_cnt)
 
         cluster = Cluster()
-        m = args.machines - cluster.make_machines()
+        m = machines_cnt - cluster.make_machines()
         if m > 0:
             cluster.add_random_machines(m)
 
         generator = None
-        if args.algorithm == 'genetic':
-            generator = GeneticGenerator(cluster.machines, task_pool.tasks, args.genetic_continuous is True)
-        elif args.algorithm == 'simple':
-            generator = SimpleGenerator(cluster.machines, task_pool.tasks)
+        if alg_name == 'genetic':
+            generator = GeneticGenerator(cluster.machines, task_pool.tasks, alg_settings)
+        elif alg_name == 'simple':
+            generator = SimpleGenerator(cluster.machines, task_pool.tasks, alg_settings)
         else:
             print("Unknown algorithm name")
             exit(1)
@@ -413,7 +446,7 @@ if __name__ == "__main__":
         times.append(end - start)
 
         scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
-        if repeat == 1 and args.draw:
+        if repeat == 1 and draw:
             scheduler.logger.draw_all()
 
     if repeat > 1:

@@ -19,7 +19,7 @@ def random_plan(cls, machines, tasks):
 def simple_plan(cls, machines, tasks):
     machines = machines[:]
     shuffle(machines)
-    sg = SimpleGenerator(machines, tasks)
+    sg = SimpleGenerator(machines, tasks, {})
     wp = cls(sg.make_one_plan())
     return wp
 
@@ -292,8 +292,8 @@ MUTPB = 0.4
 
 
 class GeneticGenerator (PlanGenerator):
-    def __init__(self, machines, tasks, continuous=False):
-        super().__init__(machines, tasks)
+    def __init__(self, machines, tasks, settings):
+        super().__init__(machines, tasks, settings)
 
         creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
         creator.create("WorkPlan", WorkPlan, fitness=creator.FitnessMin)
@@ -307,7 +307,7 @@ class GeneticGenerator (PlanGenerator):
         self.toolbox.register("select", select_tournament_unique, tournsize=3)
         self.toolbox.register("evaluate", evaluate, self.machines, self.tasks)
 
-        self.continuous = continuous
+        self.continuous = getattr(self.settings, "continuous", False)
         if self.continuous:
             self.population = self.toolbox.population(n=MU)
 

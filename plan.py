@@ -247,10 +247,11 @@ def print_time():
 
 class PlanGenerator:
 
-    def __init__(self, machines, tasks):
+    def __init__(self, machines, tasks, settings):
         self.machines_external = machines[:]
         self.machines = [machine.clone() for machine in self.machines_external]
         self.tasks = tasks[:]
+        self.settings = settings
 
     def get_plan(self):
         return WorkPlan()
