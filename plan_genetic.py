@@ -5,14 +5,9 @@ from plan_simple import SimpleGenerator
 from functools import reduce
 from itertools import zip_longest
 from time import time as get_time
+from operator import attrgetter
 
-def with_next(iterable):
-    iterator = iter(iterable)
-    current_item = next(iterator)  # throws StopIteration if empty.
-    for next_item in iterator:
-        yield (current_item, next_item)
-        current_item = next_item
-    yield (current_item, None)
+from tools import with_next, write_log
 
 
 def random_plan(cls, machines, tasks):
@@ -88,7 +83,7 @@ def mate(cls, plan1, plan2):
     ch1, ch2 = make_plan_from_parts(cls, parts), make_plan_from_parts(cls, parts)
 
     if ch1.count_tasks() != ch2.count_tasks() or ch1.count_tasks() != plan1.count_tasks():
-        print("ВАСЯ ЕСТ НЕНАША")
+        raise RuntimeError("Bad children")
 
     return ch1, ch2
 
@@ -200,6 +195,22 @@ def evaluate(machines_all, tasks, plan):
     return plan.evaluate(machines_all, tasks)
 
 
+def select_tournament_unique(individuals, k, tournsize):
+    individuals = individuals[:]
+    chosen = []
+    for i in range(k):
+        aspirants = []
+        while len(aspirants) < tournsize:
+            new = choice(individuals)
+            if new not in aspirants:
+                aspirants.append(new)
+
+        ind = max(aspirants, key=attrgetter("fitness"))
+        chosen.append(ind)
+        individuals.remove(ind)
+    return chosen
+
+
 def expand_plan(machines, tasks, plan, new_tasks):
     machines = [machine.clone() for machine in machines]
     machines = [m for m in machines if m.fixed] + [m for m in machines if not m.fixed]
@@ -269,15 +280,15 @@ def expand_plan(machines, tasks, plan, new_tasks):
                 exited = machine.go() or exited
 
     if not plan.check_plan(machines, tasks):
-        print("FUCKING SHIT!!!")
+        raise RuntimeError("Bad plan")
     return
 
 
 NGEN = 100
 MU = 10
 LAMBDA = 20
-CXPB = 0.7
-MUTPB = 0.2
+CXPB = 0.4
+MUTPB = 0.4
 
 
 class GeneticGenerator (PlanGenerator):
@@ -293,7 +304,7 @@ class GeneticGenerator (PlanGenerator):
 
         self.toolbox.register("mate", mate, creator.WorkPlan)
         self.toolbox.register("mutate", mutate, self.machines, self.tasks, max_exchanges=1, max_moves=1)
-        self.toolbox.register("select", tools.selTournament, tournsize=3)
+        self.toolbox.register("select", select_tournament_unique, tournsize=3)
         self.toolbox.register("evaluate", evaluate, self.machines, self.tasks)
 
         self.continuous = continuous
@@ -303,10 +314,12 @@ class GeneticGenerator (PlanGenerator):
     def get_plan(self):
         if not self.continuous:
             self.population = self.toolbox.population(n=MU)
+        else:
+            self.population += self.toolbox.population(n=MU)
 
-        for plan in self.population:
-            if not plan.check_plan(self.machines, self.tasks):
-                print("Shitty generation (start)")
+        self.check_population()
+
+        initial_population = self.population[:]
 
         hof = tools.HallOfFame(1)
 
@@ -323,19 +336,19 @@ class GeneticGenerator (PlanGenerator):
 
         prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init, f_res)]
 
-        print("%6.2f, %6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], prct[1], len(self.tasks), cpu_time))
+        write_log(1, "%6.2f, %6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], prct[1], len(self.tasks), cpu_time))
 
-        for plan in self.population:
-            if not plan.check_plan(self.machines, self.tasks):
-                print("Shitty generation (end)")
+        if prct[0] < 0 and prct[1] < 0:
+            # raise RuntimeWarning("Regression detected")
+            print("Regression detected")
+
+        self.check_population()
 
         return hof.items[0]
 
     def remove_task(self, task):
         if self.continuous:
-            for plan in self.population:
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [REMOVE]")
+            self.check_population()
 
         super().remove_task(task)
 
@@ -351,14 +364,11 @@ class GeneticGenerator (PlanGenerator):
                     pass
                 del plan.fitness.values
 
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [REMOVE]")
+            self.check_population()
 
     def add_task(self, task):
         if self.continuous:
-            for plan in self.population:
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [ADD]")
+            self.check_population()
 
         super().add_task(task)
 
@@ -367,14 +377,11 @@ class GeneticGenerator (PlanGenerator):
                 expand_plan(self.machines, self.tasks, plan, task)
                 del plan.fitness.values
 
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [ADD]")
+            self.check_population()
 
     def remove_machine(self, machine):
         if self.continuous:
-            for plan in self.population:
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [REMOVE MACHINE]")
+            self.check_population()
 
         super().remove_machine(machine)
 
@@ -398,19 +405,18 @@ class GeneticGenerator (PlanGenerator):
                         del plan.fitness.values
 
         if self.continuous:
-            for plan in self.population:
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [REMOVE MACHINE]")
+            self.check_population()
 
     def add_machine(self, machine):
         if self.continuous:
-            for plan in self.population:
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [ADD MACHINE]")
+            self.check_population()
 
         super().add_machine(machine)
 
         if self.continuous:
-            for plan in self.population:
-                if not plan.check_plan(self.machines, self.tasks):
-                    print("SHIT [ADD MACHINE]")
+            self.check_population()
+
+    def check_population(self):
+        for plan in self.population:
+            if not plan.check_plan(self.machines, self.tasks):
+                raise RuntimeError("Population is broken")

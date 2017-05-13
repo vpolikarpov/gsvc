@@ -1,5 +1,7 @@
 from random import randrange
 
+from tools import write_log
+
 from time import time as get_time
 time_1 = time_2 = time_3 = 0
 
@@ -72,7 +74,7 @@ class WorkPlan:
 
         # Check tasks number
         if self.count_tasks() != len(tasks):
-            print("Plan Error: Wrong tasks number")
+            write_log(0, "Plan Error: Wrong tasks number")
             return False
 
         # Check tasks duplicates
@@ -81,7 +83,7 @@ class WorkPlan:
             for id_2 in range(id_1 + 1, len(tids_plain)):
                 tid_2 = tids_plain[id_2]
                 if tid_1 == tid_2:
-                    print("Plan Error: Task duplication")
+                    write_log(0, "Plan Error: Task duplication")
                     return False
 
         # Check that each task fits to corresponding machine
@@ -91,6 +93,10 @@ class WorkPlan:
                 if m.id == mid:
                     machine = m
 
+            if machine is None:
+                write_log(0, "Plan Error: nonexistent machine")
+                return False
+
             for tid in chain:
                 task = None
                 for t in tasks:
@@ -98,7 +104,7 @@ class WorkPlan:
                         task = t
 
                 if not machine.check_task_clean(task):
-                    print("Plan Error: Misfit")
+                    write_log(0, "Plan Error: Misfit")
                     return False
 
         return True
@@ -250,20 +256,20 @@ class PlanGenerator:
         return WorkPlan()
 
     def add_task(self, task):
-        print(" -- Add task # %d" % task.id)
+        write_log(2, " -- Add task # %d" % task.id)
         self.tasks.append(task)
 
     def remove_task(self, task):
-        print(" -- Remove task # %d" % task.id)
+        write_log(2, " -- Remove task # %d" % task.id)
         self.tasks.remove(task)
 
     def add_machine(self, machine):
-        print(" -- Add machine # %d" % machine.id)
+        write_log(2, " -- Add machine # %d" % machine.id)
         self.machines_external.append(machine)
         self.machines.append(machine.clone())
 
     def remove_machine(self, machine):
-        print(" -- Remove machine # %d" % machine.id)
+        write_log(2, " -- Remove machine # %d" % machine.id)
         self.machines_external.remove(machine)
         self.machines[:] = [machine.clone() for machine in self.machines_external]
         # There is no simple way to just remove cloned machine

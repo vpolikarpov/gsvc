@@ -7,19 +7,13 @@ from math import sqrt
 
 from plan import WorkPlan
 from logger import TaskLogger
+from tools import write_log, set_verbosity
 
 from plan_genetic import GeneticGenerator
 from plan_simple import SimpleGenerator
 
 TIME_MAX = 100
 TASKS_LIMIT = 1  # 0 - no limit
-
-
-def print_log(level, text):
-    if level <= verbosity:
-        print(text)
-
-verbosity = 0
 
 
 class Task:
@@ -32,7 +26,7 @@ class Task:
         self.cpu = cpu          # 1 - 64
         self.time_total = time_total
 
-        print_log(1, "New task #%d: cpu = %2d, time = %3d" % (self.id, self.cpu, self.time_total))
+        write_log(2, "New task #%d: cpu = %2d, time = %3d" % (self.id, self.cpu, self.time_total))
 
 
 class TasksPool:
@@ -313,8 +307,8 @@ class Scheduler:
         while len(self.tp.tasks) > 0 or not cluster.idle:
 
             if ready:
-                print_log(1, "Time: %8d; Tasks cnt: %d; Pending: %d" %
-                          (self.cluster.time, cluster.get_tasks_cnt(), len(self.tp.tasks)))
+                write_log(1, "Time: %8d; Tasks cnt: %4d; Pending: %4d" %
+                          (self.cluster.time, cluster.get_tasks_cnt(), len(self.tp.tasks)), one_line=True)
                 self.run_tasks()
                 ready = False
 
@@ -347,15 +341,15 @@ class Scheduler:
 
             if deleted_machines:
                 [self.generator.remove_machine(machine) for machine in deleted_machines]
-                print_log(1, "Time: %8d; Deleted machine!" % self.cluster.time)
+                write_log(1, "Time: %8d; Deleted machine!" % self.cluster.time)
 
             if new_machines:
                 [self.generator.add_machine(machine) for machine in new_machines]
-                print_log(1, "Time: %8d; New machine!" % self.cluster.time)
+                write_log(1, "Time: %8d; New machine!" % self.cluster.time)
 
             if new_tasks:
                 [self.generator.add_task(task) for task in new_tasks]
-                print_log(1, "Time: %8d; New tasks!" % self.cluster.time)
+                write_log(1, "Time: %8d; New tasks!" % self.cluster.time)
 
         price = 0
         for machine in self.cluster.machines:
@@ -383,6 +377,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     verbosity = 2 if args.verbose2 else (1 if args.verbose else 0)
+    set_verbosity(verbosity)
 
     cl_times = []
     costs = []
@@ -412,7 +407,7 @@ if __name__ == "__main__":
         start = time.time()
         cl_time, cost = scheduler.loop()
         end = time.time()
-        print_log(0, "#%3d: Time: %8d; Cost: %8d; Time: %5.2f" % (r, cl_time, cost, end - start))
+        write_log(0, "#%3d: Time: %8d; Cost: %8d; Time: %5.2f" % (r, cl_time, cost, end - start))
         cl_times.append(cl_time)
         costs.append(cost)
         times.append(end - start)
@@ -422,8 +417,8 @@ if __name__ == "__main__":
             scheduler.logger.draw_all()
 
     if repeat > 1:
-        print_log(0, "---------------------")
-        print_log(0, "Mean cluster time: %8d; mean cost: %8d; mean time: %5.2f" %
+        write_log(0, "---------------------")
+        write_log(0, "Mean cluster time: %8d; mean cost: %8d; mean time: %5.2f" %
                   (mean(cl_times), mean(costs), mean(times)))
-        print_log(0, "         variance: %8d;  variance: %8d;  variance: %5.2f" %
+        write_log(0, "         variance: %8d;  variance: %8d;  variance: %5.2f" %
                   (sqrt(variance(cl_times)), sqrt(variance(costs)), sqrt(variance(times))))
