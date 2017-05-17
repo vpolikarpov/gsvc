@@ -21,7 +21,8 @@ class SimpleGenerator (PlanGenerator):
         return selected_plan
 
     def make_one_plan(self):
-        machines = [m for m in self.machines if m.fixed] + [m for m in self.machines if not m.fixed]
+        machines = [machine.clone() for machine in self.machines_external]
+        machines = [m for m in machines if m.fixed] + [m for m in machines if not m.fixed]
         tasks = self.tasks[:]
 
         plan = WorkPlan()

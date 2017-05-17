@@ -288,7 +288,7 @@ class GeneticGenerator (PlanGenerator):
     def __init__(self, machines, tasks, settings):
         super().__init__(machines, tasks, settings)
 
-        creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
+        creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
         creator.create("WorkPlan", WorkPlan, fitness=creator.FitnessMin)
 
         self.toolbox = base.Toolbox()
@@ -311,10 +311,10 @@ class GeneticGenerator (PlanGenerator):
             self.population = self.toolbox.population(n=self.settings["MU"])
 
     def get_plan(self):
+        self.machines[:] = [machine.clone() for machine in self.machines_external]
+
         if not self.continuous:
             self.population = self.toolbox.population(n=self.settings["MU"])
-        else:
-            self.population += self.toolbox.population(n=self.settings["MU"])
 
         self.check_population()
 
@@ -338,9 +338,9 @@ class GeneticGenerator (PlanGenerator):
 
         prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init, f_res)]
 
-        write_log(1, "%6.2f, %6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], prct[1], len(self.tasks), cpu_time))
+        write_log(1, "%6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], len(self.tasks), cpu_time))
 
-        if prct[0] < 0 and prct[1] < 0:
+        if prct[0] < 0:
             # raise RuntimeWarning("Regression detected")
             print("Regression detected")
 

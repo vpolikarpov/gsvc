@@ -1,5 +1,5 @@
 from random import randrange
-from math import ceil
+from math import ceil, log
 
 from tools import write_log
 
@@ -227,7 +227,7 @@ class WorkPlan:
         self.time = max_time
         self.cost = sum_cost
 
-        return max_time, sum_cost
+        return log(max_time + 1) + log(sum_cost + 1),
 
     def randomize(self, machines, tasks):
         for task in tasks:

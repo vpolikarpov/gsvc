@@ -30,6 +30,9 @@ class Task:
 
         write_log(2, "New task #%d: cpu = %2d, time = %3d" % (self.id, self.cpu, self.time_total))
 
+    def __str__(self):
+        return "Task #%d" % self.id
+
     def choose_length(self, timings):
         self.time_total = ceil(self.time_total * triangular(**timings))
 
@@ -101,6 +104,9 @@ class Machine:
         self.price = 0
         self.paid_time = 0
 
+    def __str__(self):
+        return "Machine #%d" % self.id
+
     def check_task(self, task):
         if self.cpu_free < task.cpu or self.memory_free < task.memory or self.disk_free < task.disk:
             return False
@@ -161,9 +167,13 @@ class Machine:
             task["time_left"] -= 1
             if task["time_left"] <= 0:
                 exited = True
-                self.workload.remove(task)
                 self.done.append(task)
-                self.update_free_resources()
+
+        if exited:
+            for task in self.done:
+                self.workload.remove(task)
+            self.update_free_resources()
+
         return exited
 
     def clone(self):
@@ -172,8 +182,10 @@ class Machine:
         new.fixed = self.fixed
         new.reserved = self.reserved
 
+        new.credit_period = self.credit_period
+
         for task in self.workload:
-            new.workload.append(task)
+            new.workload.append(task.copy())
 
         new.update_free_resources()
 
@@ -326,6 +338,7 @@ class Scheduler:
 
             if exited:
                 ready = True
+                self.plan_outdated = True
                 for machine in self.cluster.machines:
                     for task in machine.done:
                         self.logger.task_done(
