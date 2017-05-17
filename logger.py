@@ -1,5 +1,6 @@
 from PIL import Image, ImageDraw
 import yaml
+from math import ceil
 
 
 class TaskLogger:
@@ -50,7 +51,7 @@ class TaskLogger:
         else:
             print(text)
 
-    def draw_resource(self, resource, filename=None):
+    def draw_resource(self, resource, filename=None, credit_period=1):
         def my_append(lst, tpl):
             for i in range(len(lst)):
                 if lst[i][0] == tpl[0]:
@@ -76,7 +77,8 @@ class TaskLogger:
             draw.line([(0, y_end + 1), (img_w - 1, y_end + 1)], fill=(0, 0, 0))
 
             for period in m_log_item["periods"]:
-                draw.rectangle([period[0] * 10, y_start + 1, period[1] * 10, y_end], fill=(222, 222, 255))
+                period_end = period[0] + ceil((period[1] - period[0]) / credit_period) * credit_period
+                draw.rectangle([period[0] * 10, y_start + 1, period_end * 10, y_end], fill=(222, 222, 255))
 
             draw.text((2, y_start + 2), "#" + str(m_log_item["machine_id"]), fill=(255, 0, 0))
 
@@ -115,7 +117,7 @@ class TaskLogger:
 
         img.save(filename, "PNG")
 
-    def draw_all(self):
-        self.draw_resource('memory')
-        self.draw_resource('disk')
-        self.draw_resource('cpu')
+    def draw_all(self, credit_period=1):
+        self.draw_resource('memory', credit_period=credit_period)
+        self.draw_resource('disk', credit_period=credit_period)
+        self.draw_resource('cpu', credit_period=credit_period)

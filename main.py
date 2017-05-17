@@ -1,9 +1,9 @@
-from random import randint, random, choice
+from random import randint, random, choice, triangular
 from itertools import count
 import argparse
 import time
 from statistics import mean, variance
-from math import sqrt
+from math import sqrt, ceil
 
 from plan import WorkPlan
 from logger import TaskLogger
@@ -15,7 +15,6 @@ from plan_simple import SimpleGenerator
 import yaml
 
 TIME_MAX = 100
-TASKS_LIMIT = 1  # 0 - no limit
 
 
 class Task:
@@ -26,19 +25,25 @@ class Task:
         self.memory = memory    # 1 - 64
         self.disk = disk        # 0 - 16
         self.cpu = cpu          # 1 - 64
+        self.time_estimated = time_total
         self.time_total = time_total
 
         write_log(2, "New task #%d: cpu = %2d, time = %3d" % (self.id, self.cpu, self.time_total))
+
+    def choose_length(self, timings):
+        self.time_total = ceil(self.time_total * triangular(**timings))
 
 
 class TasksPool:
     _tasks_cnt = 0
 
-    def __init__(self):
+    def __init__(self, limit, timings):
         self.tasks = []
+        self.limit = limit
+        self.timings = timings
 
     def check_new_tasks(self):
-        if TASKS_LIMIT != 0 and self._tasks_cnt >= TASKS_LIMIT:
+        if self.limit != 0 and self._tasks_cnt >= self.limit:
             return []
 
         if random() < 0.9:
@@ -63,6 +68,7 @@ class TasksPool:
                 randint(1, 64),
                 randint(10, TIME_MAX),
             )
+            task.choose_length(self.timings)
             new_tasks.append(task)
         self._tasks_cnt += n
         self.tasks += new_tasks
@@ -89,8 +95,11 @@ class Machine:
         self.reserved = False  # Cluster can't revoke machine when it's reserved
         self.fixed = False  # We always pay for fixed machine, but they are always reserved
 
-        self.cost = self.cpu
+        self.cost = ceil(self.cpu + (self.memory / 2) + (self.disk / 10))
+        self.credit_period = 1
+
         self.price = 0
+        self.paid_time = 0
 
     def check_task(self, task):
         if self.cpu_free < task.cpu or self.memory_free < task.memory or self.disk_free < task.disk:
@@ -141,7 +150,10 @@ class Machine:
 
     def go(self):
         if self.reserved:
-            self.price += self.cost
+            if self.paid_time <= 0:
+                self.price += self.cost * self.credit_period
+                self.paid_time = self.credit_period
+            self.paid_time -= 1
 
         exited = False
         self.done = []
@@ -169,33 +181,16 @@ class Machine:
 
 
 class Cluster:
-    def __init__(self):
+    def __init__(self, limit, credit_period=1):
         self.machines = []
         self.time = 0
         self.idle = True
+        self.limit = limit
+        self.credit_period = credit_period
 
-    def make_machines(self):
-        fm = Machine(64, 32, 128)
-        fm.fixed = True
-        fm.reserve()
-        self.machines.append(fm)
-
-        fm = Machine(32, 32, 32)
-        fm.fixed = True
-        fm.reserve()
-        self.machines.append(fm)
-
-        fm = Machine(128, 20, 64)
-        fm.fixed = True
-        fm.reserve()
-        self.machines.append(fm)
-
-        fm = Machine(64, 128, 16)
-        fm.fixed = True
-        fm.reserve()
-        self.machines.append(fm)
-
-        return 4
+    def add_machine(self, machine):
+        machine.credit_period = self.credit_period
+        self.machines.append(machine)
 
     def add_random_machines(self, n):
         new_machines = []
@@ -205,6 +200,7 @@ class Cluster:
                 randint(8, 128),
                 randint(2, 32) * 4,
             )
+            machine.credit_period = self.credit_period
             new_machines.append(machine)
         self.machines += new_machines
         return new_machines
@@ -226,6 +222,9 @@ class Cluster:
         return deleted_machines
 
     def check_new_machines(self):
+        if self.limit != 0 and len(self.machines) >= self.limit:
+            return []
+
         new_machines = []
 
         if random() >= 0.98:
@@ -256,6 +255,15 @@ class Scheduler:
         self.plan_outdated = True
 
         self.generator = gen
+
+        for machine in self.cluster.machines:
+            if machine.fixed and not machine.reserved:
+                self.logger.machine_works(
+                    machine_id=machine.id,
+                    time=self.cluster.time,
+                    resources={"cpu": machine.cpu, "memory": machine.memory, "disk": machine.disk}
+                )
+                machine.reserve()
 
     def run_tasks(self):
         if self.plan_outdated:
@@ -386,8 +394,18 @@ if __name__ == "__main__":
             conf_text = f.read()
             conf = yaml.load(conf_text)
 
-        machines_cnt = conf.get("machines", 10)
-        tasks_cnt = conf.get("tasks", 100)
+        machines_info = conf.get("machines", {})
+        credit_period = machines_info.get("credit_period", 1)
+        machines_own = machines_info.get("own", [])
+        machines_remote = machines_info.get("remote", {})
+        machines_cnt = machines_remote.get("initial", 10)
+        machines_limit = machines_remote.get("limit", 0)
+
+        tasks_info = conf.get("tasks", {})
+        tasks_cnt = tasks_info.get("initial", 100)
+        tasks_limit = tasks_info.get("limit", 0)
+        tasks_timings = tasks_info.get("timings", {"low": 0.5, "high": 1, "mode": 0.75})
+
         repeat = conf.get("repeat", 1)
         verbosity = conf.get("verbosity", 0)
         draw = conf.get("draw", False)
@@ -397,8 +415,20 @@ if __name__ == "__main__":
         alg_settings = alg_info.get("settings", {})
 
     else:
+        credit_period = 1
+        machines_own = [
+            {"memory": 64, "disk": 32, "cpu": 128},
+            {"memory": 32, "disk": 32, "cpu": 32},
+            {"memory": 128, "disk": 20, "cpu": 64},
+            {"memory": 64, "disk": 128, "cpu": 16},
+        ]
         machines_cnt = args.machines
+        machines_limit = 0
+
         tasks_cnt = args.tasks
+        tasks_limit = 1
+        tasks_timings = {"low": 0.5, "high": 1, "mode": 0.75}
+
         repeat = args.repeat
         verbosity = 2 if args.verbose2 else (1 if args.verbose else 0)
         draw = args.draw
@@ -418,13 +448,18 @@ if __name__ == "__main__":
     times = []
 
     for r in range(repeat):
-        task_pool = TasksPool()
+        task_pool = TasksPool(limit=tasks_limit, timings=tasks_timings)
         task_pool.add_random_tasks(tasks_cnt)
 
-        cluster = Cluster()
-        m = machines_cnt - cluster.make_machines()
-        if m > 0:
-            cluster.add_random_machines(m)
+        cluster = Cluster(limit=machines_limit, credit_period=credit_period)
+
+        for m_info in machines_own:
+            fm = Machine(m_info["memory"], m_info["disk"], m_info["cpu"])
+            fm.fixed = True
+            cluster.add_machine(fm)
+
+        if machines_cnt > 0:
+            cluster.add_random_machines(machines_cnt)
 
         generator = None
         if alg_name == 'genetic':
@@ -447,7 +482,7 @@ if __name__ == "__main__":
 
         scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
         if repeat == 1 and draw:
-            scheduler.logger.draw_all()
+            scheduler.logger.draw_all(credit_period=credit_period)
 
     if repeat > 1:
         write_log(0, "---------------------")

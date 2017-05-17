@@ -1,4 +1,5 @@
 from random import randrange
+from math import ceil
 
 from tools import write_log
 
@@ -208,6 +209,7 @@ class WorkPlan:
                     time_0 = get_time()
 
                     if idle and next_task is None:
+                        time = ceil(time / machine.credit_period) * machine.credit_period
                         cost = machine.cost * time
                         self.fitness_cache[mid] = (time, cost)
                         break

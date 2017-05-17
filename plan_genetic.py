@@ -284,13 +284,6 @@ def expand_plan(machines, tasks, plan, new_tasks):
     return
 
 
-NGEN = 100
-MU = 10
-LAMBDA = 20
-CXPB = 0.4
-MUTPB = 0.4
-
-
 class GeneticGenerator (PlanGenerator):
     def __init__(self, machines, tasks, settings):
         super().__init__(machines, tasks, settings)
@@ -307,19 +300,23 @@ class GeneticGenerator (PlanGenerator):
         self.toolbox.register("select", select_tournament_unique, tournsize=3)
         self.toolbox.register("evaluate", evaluate, self.machines, self.tasks)
 
+        self.settings["GEN"] = self.settings.get("GEN", 100)  # generations number
+        self.settings["MU"] = self.settings.get("MU", 10)  # generation size
+        self.settings["LAMBDA"] = self.settings.get("LAMBDA", 20)  # offspring size
+        self.settings["C_PROBABILITY"] = self.settings.get("CX_PROBABILITY", 0.4)  # crossing over
+        self.settings["M_PROBABILITY"] = self.settings.get("generations", 0.4)  # mutation
+
         self.continuous = getattr(self.settings, "continuous", False)
         if self.continuous:
-            self.population = self.toolbox.population(n=MU)
+            self.population = self.toolbox.population(n=self.settings["MU"])
 
     def get_plan(self):
         if not self.continuous:
-            self.population = self.toolbox.population(n=MU)
+            self.population = self.toolbox.population(n=self.settings["MU"])
         else:
-            self.population += self.toolbox.population(n=MU)
+            self.population += self.toolbox.population(n=self.settings["MU"])
 
         self.check_population()
-
-        initial_population = self.population[:]
 
         hof = tools.HallOfFame(1)
 
@@ -327,12 +324,17 @@ class GeneticGenerator (PlanGenerator):
         stats.register("min", reduce, lambda x, y: x if x.dominates(y) else y)
 
         cpu_time = get_time()
-        self.population, logbook = algorithms.eaMuPlusLambda(self.population, self.toolbox, MU, LAMBDA, CXPB, MUTPB,
-                                                             NGEN, halloffame=hof, stats=stats, verbose=False)
+
+        s = self.settings
+        self.population, logbook = algorithms.eaMuPlusLambda(self.population, self.toolbox,
+                                                             s["MU"], s["LAMBDA"],
+                                                             s["C_PROBABILITY"], s["M_PROBABILITY"], s["GEN"],
+                                                             halloffame=hof, stats=stats, verbose=False)
+
         cpu_time = get_time() - cpu_time
 
         f_init = logbook[0]['min'].values
-        f_res = logbook[NGEN]['min'].values
+        f_res = logbook[self.settings["GEN"]]['min'].values
 
         prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init, f_res)]
 
