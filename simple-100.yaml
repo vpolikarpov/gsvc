@@ -16,7 +16,7 @@ machines:
   remote:
     initial: 6
     limit: 0
-  credit_period: 168
+  credit_period: 24
 tasks:
   initial: 100
   limit: 1
@@ -28,12 +28,5 @@ repeat: 100
 verbosity: 0
 draw: False
 algorithm:
-  name: genetic
-  settings:
-    continuous: False
-    GEN: 20
-    MU: 10
-    LAMBDA: 20
-    C_PROBABILITY: 0.4
-    M_PROBABILITY: 0.4
+  name: simple
 ...

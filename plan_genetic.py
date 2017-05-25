@@ -338,7 +338,7 @@ class GeneticGenerator (PlanGenerator):
 
         prct = [(fi - fr) * 100 / fi if fi > 0 else 0 for fi, fr in zip_longest(f_init, f_res)]
 
-        write_log(1, "%6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], len(self.tasks), cpu_time))
+        write_log(2, "%6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], len(self.tasks), cpu_time))
 
         if prct[0] < 0:
             # raise RuntimeWarning("Regression detected")

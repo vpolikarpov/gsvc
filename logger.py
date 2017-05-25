@@ -8,6 +8,7 @@ class TaskLogger:
         self.log_tasks = []
         self.log_machines = []
         self.path = './log/'
+        self.marks = []
 
     def task_started(self, task_id, machine_id, time, resources):
         self.log_tasks.append({
@@ -41,6 +42,13 @@ class TaskLogger:
         for log_item in self.log_machines:
             if log_item["machine_id"] == machine_id and log_item["periods"][-1][1] == -1:
                 log_item["periods"][-1] = (log_item["periods"][-1][0], time)
+
+    def add_mark(self, time, text="", color=(255, 255, 0)):
+        self.marks.append({
+            "text": text,
+            "color": color,
+            "time": time,
+        })
 
     def dump_yaml(self, filename=None):
         text = yaml.dump({"tasks": self.log_tasks, "machines": self.log_machines})
@@ -115,9 +123,15 @@ class TaskLogger:
 
             y_start = y_end + 10
 
+        for mark in self.marks:
+            pos = mark['time'] * 10 + 1
+            draw.line([(pos, 0), (pos, img_h - 1)], mark['color'])
+            draw.text((pos + 2, 2), mark['text'], mark['color'])
+
         img.save(filename, "PNG")
 
-    def draw_all(self, credit_period=1):
-        self.draw_resource('memory', credit_period=credit_period)
-        self.draw_resource('disk', credit_period=credit_period)
-        self.draw_resource('cpu', credit_period=credit_period)
+    def draw_all(self, filename_prefix='log', credit_period=1):
+        name = '%s_%%s.png' % filename_prefix
+        self.draw_resource('memory', filename=(name % 'memory'), credit_period=credit_period)
+        self.draw_resource('disk', filename=(name % 'disk'), credit_period=credit_period)
+        self.draw_resource('cpu', filename=(name % 'cpu'), credit_period=credit_period)

@@ -9,14 +9,13 @@ class SimpleGenerator (PlanGenerator):
     def get_plan(self):
         selected_plan = None
         min_cost = -1
-        min_time = -1
 
         for i in range(TRIES):
             shuffle(self.machines)
             plan = self.make_one_plan()
-            time, cost = plan.evaluate(self.machines, self.tasks)
-            if selected_plan is None or (time < min_time and cost < min_cost):
-                min_time, min_cost = time, cost
+            cost = plan.evaluate(self.machines, self.tasks)
+            if selected_plan is None or cost < min_cost:
+                min_cost = cost
                 selected_plan = plan
         return selected_plan
 

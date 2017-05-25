@@ -3,7 +3,7 @@ from itertools import count
 import argparse
 import time
 from statistics import mean, variance
-from math import sqrt, ceil
+from math import sqrt, ceil, log
 
 from plan import WorkPlan
 from logger import TaskLogger
@@ -67,8 +67,8 @@ class TasksPool:
         for i in range(n):
             task = Task(
                 randint(1, 64),  # 1 - 64
-                randint(0, 16),  # 0 - 16
-                randint(1, 64),
+                0,  # randint(0, 16),  # 0 - 16
+                0,  # randint(1, 64),
                 randint(10, TIME_MAX),
             )
             task.choose_length(self.timings)
@@ -135,8 +135,12 @@ class Machine:
     def free(self):
         if self.fixed:
             raise ValueError("You cannot free fixed machine")
-        else:
+
+        if self.paid_time <= 0:
             self.reserved = False
+            return True
+        else:
+            return False
 
     def update_free_resources(self):
         cpu = mem = disk = 0
@@ -250,7 +254,7 @@ class Cluster:
     def go(self):
         exited = False
         for machine in self.machines:
-            exited = exited or machine.go()
+            exited = machine.go() or exited
         self.idle = all(machine.idle for machine in self.machines)
         self.time += 1
         return exited
@@ -262,6 +266,16 @@ class Scheduler:
         self.cluster = cl
 
         self.logger = TaskLogger()
+        self.stats = {
+            'time': 0,
+            'machine-time': 0,
+            'machine-time-remote': 0,
+            'downtime': 0,
+            'downtime-remote': 0,
+            'tasks-sum': 0,
+            'occupancy-sum': 0,
+        }
+        self.stats_enabled = True
 
         self.plan = WorkPlan()
         self.plan_outdated = True
@@ -324,6 +338,30 @@ class Scheduler:
                     resources={"cpu": next_task.cpu, "memory": next_task.memory, "disk": next_task.disk}
                 )
 
+        if len(self.tp.tasks) == 0 and self.stats_enabled:
+            self.stats_enabled = False
+            self.logger.add_mark(self.cluster.time)
+
+    def update_stats(self):
+
+        self.stats['time'] += 1
+
+        for machine in self.cluster.machines:
+            if machine.reserved:
+                self.stats['machine-time'] += 1
+                self.stats['occupancy-sum'] += 1 - min(machine.memory_free / machine.memory,
+                                                       machine.cpu_free / machine.cpu,
+                                                       machine.disk_free / machine.disk)
+                if not machine.fixed:
+                    self.stats['machine-time-remote'] += 1
+
+                if machine.idle and len(machine.workload) == 0:
+                    self.stats['downtime'] += 1
+                    if not machine.fixed:
+                        self.stats['downtime-remote'] += 1
+                else:
+                    self.stats['tasks-sum'] += len(machine.workload)
+
     def loop(self):
         ready = True
         while len(self.tp.tasks) > 0 or not cluster.idle:
@@ -334,9 +372,12 @@ class Scheduler:
                 self.run_tasks()
                 ready = False
 
-            exited = self.cluster.go()
+            if self.stats_enabled:
+                self.update_stats()
 
+            exited = self.cluster.go()
             if exited:
+                exited = False
                 ready = True
                 self.plan_outdated = True
                 for machine in self.cluster.machines:
@@ -346,9 +387,11 @@ class Scheduler:
                             time=self.cluster.time
                         )
                     del machine.done[:]
-                    if machine.idle and not machine.fixed:
-                        if machine.id not in self.plan.chains or len(self.plan.chains[machine.id]) == 0:
-                            machine.free()
+
+            for machine in self.cluster.machines:
+                if machine.idle and machine.reserved and not machine.fixed:
+                    if machine.id not in self.plan.chains or len(self.plan.chains[machine.id]) == 0:
+                        if machine.free():
                             self.logger.machine_idle(
                                 machine_id=machine.id,
                                 time=self.cluster.time
@@ -364,15 +407,21 @@ class Scheduler:
 
             if deleted_machines:
                 [self.generator.remove_machine(machine) for machine in deleted_machines]
-                write_log(1, "Time: %8d; Deleted machine!" % self.cluster.time)
+                write_log(2, "Time: %8d; Deleted machine!" % self.cluster.time)
 
             if new_machines:
                 [self.generator.add_machine(machine) for machine in new_machines]
-                write_log(1, "Time: %8d; New machine!" % self.cluster.time)
+                write_log(2, "Time: %8d; New machine!" % self.cluster.time)
 
             if new_tasks:
                 [self.generator.add_task(task) for task in new_tasks]
-                write_log(1, "Time: %8d; New tasks!" % self.cluster.time)
+                write_log(2, "Time: %8d; New tasks!" % self.cluster.time)
+
+        for machine in self.cluster.machines:
+            self.logger.machine_idle(
+                machine_id=machine.id,
+                time=self.cluster.time
+            )
 
         price = 0
         for machine in self.cluster.machines:
@@ -384,72 +433,62 @@ class Scheduler:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Segment an image using QR markers')
 
-    parser.add_argument('algorithm', help='("simple" or "genetic")', nargs='?', default="simple")
+    parser.add_argument('config', help='Configuration file')
 
-    parser.add_argument('-C', '--config', help='Configuration file')
-
-    parser.add_argument('-c', '--continuous', dest='genetic_continuous', action='store_true')
-
-    parser.add_argument('-t', '--tasks', metavar='T', type=int, default='100', help='Number of tasks')
-    parser.add_argument('-m', '--machines', metavar='M', type=int, default='10', help='Number of machines')
-
-    parser.add_argument('-r', '--repeat', metavar='R', type=int, default='1', help='Repeat simulation R times')
-
+    parser.add_argument('-t', '--tasks', metavar='T', type=int, help='Number of tasks')
+    parser.add_argument('-m', '--machines', metavar='M', type=int, help='Number of machines')
+    parser.add_argument('-r', '--repeat', metavar='R', type=int, help='Repeat simulation R times')
     parser.add_argument('-d', '--draw', dest='draw', action='store_true', help='Draw log (ignored when R > 1)')
+    parser.add_argument('-l', '--log', dest='log', action='store_true', help='Enable text logging')
     parser.add_argument('-v', dest='verbose', action='store_true', help='Verbose mode')
     parser.add_argument('-vv', '--verbose', dest='verbose2', action='store_true', help='Too verbose mode')
 
     args = parser.parse_args()
 
-    if args.config:
-        conf = {}
-        with open(args.config, "r") as f:
-            conf_text = f.read()
-            conf = yaml.load(conf_text)
+    # Read conf
+    conf = {}
+    with open(args.config, "r") as f:
+        conf_text = f.read()
+        conf = yaml.load(conf_text)
 
-        machines_info = conf.get("machines", {})
-        credit_period = machines_info.get("credit_period", 1)
-        machines_own = machines_info.get("own", [])
-        machines_remote = machines_info.get("remote", {})
-        machines_cnt = machines_remote.get("initial", 10)
-        machines_limit = machines_remote.get("limit", 0)
-
-        tasks_info = conf.get("tasks", {})
-        tasks_cnt = tasks_info.get("initial", 100)
-        tasks_limit = tasks_info.get("limit", 0)
-        tasks_timings = tasks_info.get("timings", {"low": 0.5, "high": 1, "mode": 0.75})
-
-        repeat = conf.get("repeat", 1)
-        verbosity = conf.get("verbosity", 0)
-        draw = conf.get("draw", False)
-
-        alg_info = conf["algorithm"]
-        alg_name = alg_info["name"]
-        alg_settings = alg_info.get("settings", {})
-
-    else:
-        credit_period = 1
-        machines_own = [
+    machines_info = conf.get("machines", {})
+    credit_period = machines_info.get("credit_period", 1)
+    machines_own = machines_info.get("own", [
             {"memory": 64, "disk": 32, "cpu": 128},
             {"memory": 32, "disk": 32, "cpu": 32},
             {"memory": 128, "disk": 20, "cpu": 64},
             {"memory": 64, "disk": 128, "cpu": 16},
-        ]
+        ])
+    machines_remote = machines_info.get("remote", {})
+    machines_cnt = machines_remote.get("initial", 10)
+    machines_limit = machines_remote.get("limit", 0)
+
+    tasks_info = conf.get("tasks", {})
+    tasks_cnt = tasks_info.get("initial", 100)
+    tasks_limit = tasks_info.get("limit", 0)
+    tasks_timings = tasks_info.get("timings", {"low": 0.5, "high": 1, "mode": 0.75})
+
+    repeat = conf.get("repeat", 1)
+    verbosity = conf.get("verbosity", 0)
+    draw = conf.get("draw", False)
+    logging = conf.get("log", False)
+
+    alg_info = conf["algorithm"]
+    alg_name = alg_info["name"]
+    alg_settings = alg_info.get("settings", {})
+
+    # Apply args
+    if args.machines:
         machines_cnt = args.machines
-        machines_limit = 0
-
+    if args.tasks:
         tasks_cnt = args.tasks
-        tasks_limit = 1
-        tasks_timings = {"low": 0.5, "high": 1, "mode": 0.75}
-
+    if args.repeat:
         repeat = args.repeat
-        verbosity = 2 if args.verbose2 else (1 if args.verbose else 0)
+    if args.draw:
         draw = args.draw
-
-        alg_name = args.algorithm
-        alg_settings = {}
-        if args.genetic_continuous:
-            alg_settings["continuous"] = True
+    if args.log:
+        logging = args.log
+    verbosity = 2 if args.verbose2 else (1 if args.verbose else verbosity)
 
     if repeat > 1 and draw is True:
         raise RuntimeError("Cannot draw result when repeating multiple times")
@@ -457,8 +496,10 @@ if __name__ == "__main__":
     set_verbosity(verbosity)
 
     cl_times = []
-    costs = []
+    prices = []
     times = []
+
+    stats_list = []
 
     for r in range(repeat):
         task_pool = TasksPool(limit=tasks_limit, timings=tasks_timings)
@@ -486,20 +527,41 @@ if __name__ == "__main__":
         scheduler = Scheduler(task_pool, cluster, generator)
 
         start = time.time()
-        cl_time, cost = scheduler.loop()
+        cl_time, price = scheduler.loop()
         end = time.time()
-        write_log(0, "#%3d: Time: %8d; Cost: %8d; Time: %5.2f" % (r, cl_time, cost, end - start))
+        write_log(0, "#%3d: Cost: %5.2f" % (r, log(cl_time) + log(price)))
+        write_log(1, "#%3d: Time: %8d; Price: %8d; Time: %5.2f" % (r, cl_time, price, end - start))
+        stats = scheduler.stats
+        stats_list.append(stats)
+        write_log(1, "Статистика:")
+        write_log(1, "#%3d: Время: %3d" % (r, stats['time']))
+        write_log(1, "#%3d: Простои: %3d: %5.2f" % (r, stats['downtime-remote'], stats['downtime-remote']/stats['machine-time-remote']))
+        write_log(1, "#%3d: Среднее число машин: %5.2f" % (r, stats['machine-time']/stats['time']))
+        write_log(1, "#%3d: Среднее число задач на машине: %5.2f" % (r, stats['tasks-sum']/stats['machine-time']))
+        write_log(1, "#%3d: Средняя загруженность машин: %5.2f" % (r, stats['occupancy-sum']/stats['machine-time']))
         cl_times.append(cl_time)
-        costs.append(cost)
+        prices.append(price)
         times.append(end - start)
 
-        scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
-        if repeat == 1 and draw:
-            scheduler.logger.draw_all(credit_period=credit_period)
+        if logging:
+            scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
+        if draw:
+            scheduler.logger.draw_all(filename_prefix=args.config, credit_period=credit_period)
 
     if repeat > 1:
+        stats = stats_list.pop(0)
+        for s in stats_list:
+            for key in s:
+                stats[key] += s[key]
+
         write_log(0, "---------------------")
-        write_log(0, "Mean cluster time: %8d; mean cost: %8d; mean time: %5.2f" %
-                  (mean(cl_times), mean(costs), mean(times)))
-        write_log(0, "         variance: %8d;  variance: %8d;  variance: %5.2f" %
-                  (sqrt(variance(cl_times)), sqrt(variance(costs)), sqrt(variance(times))))
+        write_log(0, "Простои: %6.4f" % (stats['downtime-remote']/stats['machine-time-remote']))
+        write_log(0, "Среднее число машин: %5.2f" % (stats['machine-time']/stats['time']))
+        write_log(0, "Среднее число задач на машине: %5.2f" % (stats['tasks-sum']/stats['machine-time']))
+        write_log(0, "Средняя загруженность машин: %5.2f" % (stats['occupancy-sum']/stats['machine-time']))
+
+        write_log(0, "---------------------")
+        write_log(0, "Mean cluster time: %8d; mean price: %8d; mean time: %5.2f" %
+                  (mean(cl_times), mean(prices), mean(times)))
+        write_log(0, "         variance: %8d;   variance: %8d;  variance: %5.2f" %
+                  (sqrt(variance(cl_times)), sqrt(variance(prices)), sqrt(variance(times))))
