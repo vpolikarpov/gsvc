@@ -1,8 +1,6 @@
 from plan import WorkPlan, PlanGenerator
 from random import shuffle
 
-TRIES = 10
-
 
 class SimpleGenerator (PlanGenerator):
 
@@ -10,7 +8,9 @@ class SimpleGenerator (PlanGenerator):
         selected_plan = None
         min_cost = -1
 
-        for i in range(TRIES):
+        tries = self.settings.get('tries', 1)
+
+        for i in range(tries):
             shuffle(self.machines)
             plan = self.make_one_plan()
             cost = plan.evaluate(self.machines, self.tasks)

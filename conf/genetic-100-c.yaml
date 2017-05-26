@@ -16,6 +16,23 @@ machines:
   remote:
     initial: 6
     limit: 0
+    params:
+      - cpu: 16
+        disk: 100
+        memory: 32
+        quantity: 1
+      - cpu: 128
+        disk: 100
+        memory: 128
+        quantity: 1
+      - cpu: 64
+        disk: 50
+        memory: 16
+        quantity: 1
+      - cpu: 16
+        disk: 200
+        memory: 128
+        quantity: 1
   credit_period: 24
 tasks:
   spawn:
@@ -27,6 +44,22 @@ tasks:
         cnt: 20
       - time: 160
         cnt: 40
+  params:
+    - cpu: [1, 64]
+      disk: [1, 16]
+      memory: [1, 64]
+      time: [10, 70]
+      quantity: 1
+    - cpu: [16, 32]
+      disk: [1, 8]
+      memory: [8, 32]
+      time: [30, 60]
+      quantity: 2
+    - cpu: [4, 8]
+      disk: [8, 16]
+      memory: [8, 16]
+      time: [70, 120]
+      quantity: 2
   timings:
     low: 0.5
     high: 0.9
