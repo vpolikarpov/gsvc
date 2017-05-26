@@ -18,8 +18,15 @@ machines:
     limit: 0
   credit_period: 24
 tasks:
-  initial: 100
-  limit: 1
+  spawn:
+    type: waves
+    waves:
+      - time: 0
+        cnt: 40
+      - time: 70
+        cnt: 20
+      - time: 160
+        cnt: 40
   timings:
     low: 0.5
     high: 0.9
@@ -31,7 +38,7 @@ algorithm:
   name: genetic
   settings:
     continuous: False
-    GEN: 20
+    GEN: 100
     MU: 10
     LAMBDA: 20
     C_PROBABILITY: 0.4

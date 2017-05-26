@@ -4,6 +4,7 @@ import argparse
 import time
 from statistics import mean, variance
 from math import sqrt, ceil, log
+from os import path
 
 from plan import WorkPlan
 from logger import TaskLogger
@@ -40,26 +41,70 @@ class Task:
 class TasksPool:
     _tasks_cnt = 0
 
-    def __init__(self, limit, timings):
+    def __init__(self, cnf):
         self.tasks = []
-        self.limit = limit
-        self.timings = timings
+        self.additions = {}
+        self.conf = cnf
+        self.end = False
+        if cnf["spawn"]["type"] == "random":
+            self.spawn = self.new_tasks_random
+        if cnf["spawn"]["type"] == "waves":
+            self.spawn = self.new_tasks_waves
+            self.conf["spawn"]["last_wave"] = max(wave["time"] for wave in self.conf["spawn"]["waves"])
+        else:
+            raise ValueError("Tasks spawning type is not set")
 
-    def check_new_tasks(self):
-        if self.limit != 0 and self._tasks_cnt >= self.limit:
+    def check_new_tasks(self, time, initial=False):
+        tasks = self.spawn(time, initial)
+        for task in tasks:
+            self.additions[task.id] = time
+        return tasks
+
+    def new_tasks_random(self, _, initial):
+        s = self.conf["spawn"]
+
+        if initial:
+            initial_cnt = s.get("initial-cnt", 0)
+            return self.add_random_tasks(initial_cnt)
+
+        limit = s.get("limit", 0)
+
+        if limit != 0 and self._tasks_cnt >= limit:
+            self.end = True
             return []
 
-        if random() < 0.9:
+        if random() < s["add-probability"]:
             return []
 
-        cnt = randint(1, 3)
+        cnt = randint(s["add-cnt-min"], s["add-cnt-max"])
         if cnt == 0:
             return []
 
         new = self.add_random_tasks(cnt)
         return new
 
-    def remove_task(self, task):
+    def new_tasks_waves(self, time, _):
+        waves = self.conf["spawn"]['waves']
+
+        new = []
+        for wave in waves:
+            if wave["time"] == time:
+                new = self.add_random_tasks(wave["cnt"])
+                break
+
+        if time >= self.conf["spawn"]["last_wave"]:
+            self.end = True
+
+        return new
+
+    def is_empty(self):
+        return self.end and len(self.tasks) == 0
+
+    def task_init_time(self, task):
+        return self.additions[task.id]
+
+    def pull_task(self, task):
+        task.choose_length(self.conf["timings"])
         self.tasks.remove(task)
 
     def add_random_tasks(self, n):
@@ -71,7 +116,6 @@ class TasksPool:
                 0,  # randint(1, 64),
                 randint(10, TIME_MAX),
             )
-            task.choose_length(self.timings)
             new_tasks.append(task)
         self._tasks_cnt += n
         self.tasks += new_tasks
@@ -200,6 +244,7 @@ class Cluster:
     def __init__(self, limit, credit_period=1):
         self.machines = []
         self.time = 0
+        self.hidden_price = 0
         self.idle = True
         self.limit = limit
         self.credit_period = credit_period
@@ -233,6 +278,7 @@ class Cluster:
             if len(free) > 0:
                 machine = choice(free)
                 self.machines.remove(machine)
+                self.hidden_price += machine.price
                 deleted_machines.append(machine)
 
         return deleted_machines
@@ -250,6 +296,12 @@ class Cluster:
 
     def get_tasks_cnt(self):
         return sum((len(machine.workload) for machine in self.machines))
+
+    def get_price(self):
+        p = self.hidden_price
+        for machine in self.machines:
+            p += machine.price
+        return p
 
     def go(self):
         exited = False
@@ -272,8 +324,11 @@ class Scheduler:
             'machine-time-remote': 0,
             'downtime': 0,
             'downtime-remote': 0,
-            'tasks-sum': 0,
+            'tasks-time': 0,
+            'tasks': 0,
             'occupancy-sum': 0,
+            'waiting': 0,
+            'waiting-max': 0,
         }
         self.stats_enabled = True
 
@@ -319,8 +374,14 @@ class Scheduler:
                     break
 
                 del chain[0]
-                self.tp.remove_task(next_task)
+                self.tp.pull_task(next_task)
                 self.generator.remove_task(next_task)
+
+                wait_time = self.cluster.time - self.tp.task_init_time(next_task)
+                self.stats['waiting'] += wait_time
+                self.stats['tasks'] += 1
+                if wait_time > self.stats['waiting-max']:
+                    self.stats['waiting-max'] = wait_time
 
                 if not machine.reserved:
                     self.logger.machine_works(
@@ -338,7 +399,7 @@ class Scheduler:
                     resources={"cpu": next_task.cpu, "memory": next_task.memory, "disk": next_task.disk}
                 )
 
-        if len(self.tp.tasks) == 0 and self.stats_enabled:
+        if self.tp.is_empty() and self.stats_enabled:
             self.stats_enabled = False
             self.logger.add_mark(self.cluster.time)
 
@@ -360,11 +421,11 @@ class Scheduler:
                     if not machine.fixed:
                         self.stats['downtime-remote'] += 1
                 else:
-                    self.stats['tasks-sum'] += len(machine.workload)
+                    self.stats['tasks-time'] += len(machine.workload)
 
     def loop(self):
         ready = True
-        while len(self.tp.tasks) > 0 or not cluster.idle:
+        while not self.tp.is_empty() or not cluster.idle:
 
             if ready:
                 write_log(1, "Time: %8d; Tasks cnt: %4d; Pending: %4d" %
@@ -399,7 +460,7 @@ class Scheduler:
 
             deleted_machines = self.cluster.check_deleted_machines()
             new_machines = self.cluster.check_new_machines()
-            new_tasks = self.tp.check_new_tasks()
+            new_tasks = self.tp.check_new_tasks(self.cluster.time)
 
             if new_tasks or new_machines or deleted_machines:
                 ready = True
@@ -423,11 +484,7 @@ class Scheduler:
                 time=self.cluster.time
             )
 
-        price = 0
-        for machine in self.cluster.machines:
-            price += machine.price
-
-        return self.cluster.time, price
+        return self.cluster.time, self.cluster.get_price()
 
 
 if __name__ == "__main__":
@@ -435,7 +492,6 @@ if __name__ == "__main__":
 
     parser.add_argument('config', help='Configuration file')
 
-    parser.add_argument('-t', '--tasks', metavar='T', type=int, help='Number of tasks')
     parser.add_argument('-m', '--machines', metavar='M', type=int, help='Number of machines')
     parser.add_argument('-r', '--repeat', metavar='R', type=int, help='Repeat simulation R times')
     parser.add_argument('-d', '--draw', dest='draw', action='store_true', help='Draw log (ignored when R > 1)')
@@ -464,9 +520,6 @@ if __name__ == "__main__":
     machines_limit = machines_remote.get("limit", 0)
 
     tasks_info = conf.get("tasks", {})
-    tasks_cnt = tasks_info.get("initial", 100)
-    tasks_limit = tasks_info.get("limit", 0)
-    tasks_timings = tasks_info.get("timings", {"low": 0.5, "high": 1, "mode": 0.75})
 
     repeat = conf.get("repeat", 1)
     verbosity = conf.get("verbosity", 0)
@@ -480,8 +533,6 @@ if __name__ == "__main__":
     # Apply args
     if args.machines:
         machines_cnt = args.machines
-    if args.tasks:
-        tasks_cnt = args.tasks
     if args.repeat:
         repeat = args.repeat
     if args.draw:
@@ -502,8 +553,8 @@ if __name__ == "__main__":
     stats_list = []
 
     for r in range(repeat):
-        task_pool = TasksPool(limit=tasks_limit, timings=tasks_timings)
-        task_pool.add_random_tasks(tasks_cnt)
+        task_pool = TasksPool(tasks_info)
+        task_pool.check_new_tasks(time=0, initial=True)
 
         cluster = Cluster(limit=machines_limit, credit_period=credit_period)
 
@@ -537,8 +588,10 @@ if __name__ == "__main__":
         write_log(1, "#%3d: Время: %3d" % (r, stats['time']))
         write_log(1, "#%3d: Простои: %3d: %5.2f" % (r, stats['downtime-remote'], stats['downtime-remote']/stats['machine-time-remote']))
         write_log(1, "#%3d: Среднее число машин: %5.2f" % (r, stats['machine-time']/stats['time']))
-        write_log(1, "#%3d: Среднее число задач на машине: %5.2f" % (r, stats['tasks-sum']/stats['machine-time']))
+        write_log(1, "#%3d: Среднее число задач на машине: %5.2f" % (r, stats['tasks-time']/stats['machine-time']))
         write_log(1, "#%3d: Средняя загруженность машин: %5.2f" % (r, stats['occupancy-sum']/stats['machine-time']))
+        write_log(1, "#%3d: Среднее время ожидания задачи: %5.2f" % (r, stats['waiting']/stats['tasks']))
+        write_log(1, "#%3d: Макс. время ожидания задачи: %3d" % (r, stats['waiting-max']))
         cl_times.append(cl_time)
         prices.append(price)
         times.append(end - start)
@@ -546,7 +599,10 @@ if __name__ == "__main__":
         if logging:
             scheduler.logger.dump_yaml('log_' + str(r) + '.txt')
         if draw:
-            scheduler.logger.draw_all(filename_prefix=args.config, credit_period=credit_period)
+            scheduler.logger.draw_all(
+                filename_prefix=path.splitext(path.basename(args.config))[0],
+                credit_period=credit_period
+            )
 
     if repeat > 1:
         stats = stats_list.pop(0)
@@ -557,8 +613,10 @@ if __name__ == "__main__":
         write_log(0, "---------------------")
         write_log(0, "Простои: %6.4f" % (stats['downtime-remote']/stats['machine-time-remote']))
         write_log(0, "Среднее число машин: %5.2f" % (stats['machine-time']/stats['time']))
-        write_log(0, "Среднее число задач на машине: %5.2f" % (stats['tasks-sum']/stats['machine-time']))
+        write_log(0, "Среднее число задач на машине: %5.2f" % (stats['tasks-time']/stats['machine-time']))
         write_log(0, "Средняя загруженность машин: %5.2f" % (stats['occupancy-sum']/stats['machine-time']))
+        write_log(0, "Среднее время ожидания задачи: %5.2f" % (stats['waiting']/stats['tasks']))
+        write_log(0, "Усреднённое максимальное время ожидания задачи: %5.2f" % (stats['waiting-max']/repeat))
 
         write_log(0, "---------------------")
         write_log(0, "Mean cluster time: %8d; mean price: %8d; mean time: %5.2f" %

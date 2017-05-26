@@ -18,8 +18,15 @@ machines:
     limit: 0
   credit_period: 24
 tasks:
-  initial: 100
-  limit: 1
+  spawn:
+    type: waves
+    waves:
+      - time: 0
+        cnt: 40
+      - time: 70
+        cnt: 20
+      - time: 160
+        cnt: 40
   timings:
     low: 0.5
     high: 0.9
