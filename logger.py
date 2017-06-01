@@ -1,6 +1,7 @@
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import yaml
 from math import ceil
+from copy import deepcopy
 
 
 class TaskLogger:
@@ -78,6 +79,8 @@ class TaskLogger:
         img = Image.new('RGB', (img_w, img_h), (255, 255, 255))
         draw = ImageDraw.Draw(img)
 
+        mn_fnt = ImageFont.truetype('arial.ttf', size=100)
+
         y_start = 5
         for m_log_item in self.log_machines:
             y_end = y_start + m_log_item["resources"][resource] * 10
@@ -86,18 +89,130 @@ class TaskLogger:
 
             for period in m_log_item["periods"]:
                 period_end = period[0] + ceil((period[1] - period[0]) / credit_period) * credit_period
-                draw.rectangle([period[0] * 10, y_start + 1, period_end * 10, y_end], fill=(222, 222, 255))
+                draw.rectangle([period[0] * 10, y_start + 1, period_end * 10, y_end], fill=(235, 235, 255))
 
-            draw.text((2, y_start + 2), "#" + str(m_log_item["machine_id"]), fill=(255, 0, 0))
-
-            start_val = 0
-            dif = []
-            for ent in self.log_tasks:
-                if ent["machine_id"] != m_log_item["machine_id"]:
+            # TASKS
+            events = []
+            for task in self.log_tasks:
+                if task["machine_id"] != m_log_item["machine_id"]:
                     continue
 
-                my_append(dif, (ent["start"], ent["resources"][resource], 1))
-                my_append(dif, (ent["end"], -ent["resources"][resource], -1))
+                events.append({
+                    'time': task["start"],
+                    'id': task["task_id"],
+                    'res': task["resources"][resource],
+                    'type': 1})
+                events.append({
+                    'time': task["end"],
+                    'id': task["task_id"],
+                    'res': task["resources"][resource],
+                    'type': -1})
+
+            events.sort(key=lambda t: t['time'])
+
+            colors = [
+                (255, 204, 102),
+                (255, 102, 51),
+                (255, 204, 204),
+                (255, 102, 153),
+                (204, 102, 255),
+                (204, 204, 255),
+                (102, 153, 255),
+                (153, 255, 204),
+                (102, 255, 153),
+                (102, 255, 0),
+            ]
+            color_id = 0
+
+            bounds = []
+
+            if len(events) > 0:
+                active = []
+                time_prev = 0
+                i = 0
+                while True:
+                    time_new = events[i]['time']
+                    if time_new != 0:
+                        x1 = time_prev * 10
+                        x2 = time_new * 10
+                        y1 = y_end
+
+                        for line in active:
+                            y2 = y_end - line["pos"] * 10
+                            draw.rectangle(((x1, y1), (x2 - 1, y2)), fill=colors[line["color"]])
+                            y1 = y2
+
+                    active_new = deepcopy(active)
+                    deleted = []
+
+                    cnt = len(events)
+                    while i < cnt and events[i]['time'] == time_new:
+                        ev = events[i]
+                        if ev['type'] == 1:
+                            place = 0
+                            while place < len(active_new):
+                                h = active_new[place]['pos'] - (active_new[place-1]['pos'] if place > 0 else 0)
+                                if h > ev['res']:
+                                    break
+                                place += 1
+
+                            color_id = (color_id + 1) % 10
+
+                            pos = active[place-1]['pos'] if len(active) and place > 0 else 0
+                            active.insert(place, {'id': ev["id"], 'pos': pos})
+
+                            pos_new = active_new[place-1]['pos'] if len(active_new) and place > 0 else 0
+                            active_new.insert(place, {'id': ev["id"], 'pos': pos_new, 'color': color_id})
+
+                            for j in range(place, len(active_new)):
+                                active_new[j]["pos"] += ev['res']
+
+                        else:
+                            change = 0
+                            id = 0
+                            for line in active_new:
+                                if line["id"] == ev['id']:
+                                    change += ev['res']
+                                line["pos"] -= change
+
+                            deleted.append(ev['id'])
+
+                        i += 1
+
+                    if i == cnt:
+                        break
+
+                    y1_prev = y_end
+                    y2_prev = y_end
+                    for j in range(len(active)):
+                        y1 = y_end - active[j]["pos"] * 10
+                        y2 = y_end - active_new[j]["pos"] * 10
+                        x = time_new * 10
+
+                        if "color" in active[j] and active[j]["id"] not in deleted and y1 != y2:
+                            bounds.append([((x, min(y1, y2)), (x, max(y1_prev, y2_prev))),
+                                           colors[active_new[j]["color"]], 3])
+
+                        y1_prev = y1
+                        y2_prev = y2
+
+                    time_prev = time_new
+                    active = [ent for ent in active_new if ent["id"] not in deleted]
+
+            for bound in bounds:
+                draw.line(*bound)
+
+            draw.text((10, y_end - 110), "#" + str(m_log_item["machine_id"]), fill=(0, 0, 0), font=mn_fnt)
+
+            # ENVELOPE
+            start_val = 0
+            dif = []
+            for line in self.log_tasks:
+                if line["machine_id"] != m_log_item["machine_id"]:
+                    continue
+
+                my_append(dif, (line["start"], line["resources"][resource], 1))
+                my_append(dif, (line["end"], -line["resources"][resource], -1))
 
                 dif.sort(key=lambda t: t[0])
 
@@ -119,7 +234,7 @@ class TaskLogger:
                 last_y = y
                 last_x = x
 
-            draw.line(pts, fill=(255, 0, 0))
+            draw.line(pts, fill=(255, 0, 0), width=3)
 
             y_start = y_end + 10
 
