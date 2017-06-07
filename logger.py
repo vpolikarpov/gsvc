@@ -79,7 +79,7 @@ class TaskLogger:
         img = Image.new('RGB', (img_w, img_h), (255, 255, 255))
         draw = ImageDraw.Draw(img)
 
-        mn_fnt = ImageFont.truetype('arial.ttf', size=100)
+        mn_fnt = ImageFont.truetype('arial.ttf', size=50)
 
         y_start = 5
         for m_log_item in self.log_machines:
@@ -202,8 +202,6 @@ class TaskLogger:
             for bound in bounds:
                 draw.line(*bound)
 
-            draw.text((10, y_end - 110), "#" + str(m_log_item["machine_id"]), fill=(0, 0, 0), font=mn_fnt)
-
             # ENVELOPE
             start_val = 0
             dif = []
@@ -235,6 +233,8 @@ class TaskLogger:
                 last_x = x
 
             draw.line(pts, fill=(255, 0, 0), width=3)
+
+            draw.text((10, y_end - 60), "#" + str(m_log_item["machine_id"]), fill=(0, 0, 0), font=mn_fnt)
 
             y_start = y_end + 10
 

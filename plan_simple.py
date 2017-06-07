@@ -13,7 +13,8 @@ class SimpleGenerator (PlanGenerator):
         for i in range(tries):
             shuffle(self.machines)
             plan = self.make_one_plan()
-            cost = plan.evaluate(self.machines, self.tasks)
+            time, price = plan.evaluate(self.machines, self.tasks)
+            cost = self.scalar(time, price)
             if selected_plan is None or cost < min_cost:
                 min_cost = cost
                 selected_plan = plan

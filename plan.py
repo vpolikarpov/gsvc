@@ -1,5 +1,5 @@
 from random import randrange
-from math import ceil, log
+from math import ceil
 
 from tools import write_log
 
@@ -227,7 +227,7 @@ class WorkPlan:
         self.time = max_time
         self.cost = sum_cost
 
-        return log(max_time + 1) + log(sum_cost + 1),
+        return max_time, sum_cost
 
     def randomize(self, machines, tasks):
         for task in tasks:
@@ -249,18 +249,36 @@ def print_time():
 
 class PlanGenerator:
 
-    def __init__(self, machines, tasks, settings):
+    def __init__(self, machines, tasks, settings, func):
         self.machines_external = machines[:]
         self.machines = [machine.clone() for machine in self.machines_external]
-        self.tasks = tasks[:]
+
+        self.tasks = []
+        self.tasks_pending = tasks[:]
+        self.check_pending_tasks()
+
         self.settings = settings
+        self.scalar = func
+
+    def check_pending_tasks(self):
+        fit = []
+        for task in self.tasks_pending:
+            for machine in self.machines:
+                if machine.check_task_clean(task):
+                    fit.append(task)
+                    break
+
+        for task in fit:
+            self.tasks_pending.remove(task)
+            self.tasks.append(task)
 
     def get_plan(self):
         return WorkPlan()
 
     def add_task(self, task):
         write_log(2, " -- Add task # %d" % task.id)
-        self.tasks.append(task)
+        self.tasks_pending.append(task)
+        self.check_pending_tasks()
 
     def remove_task(self, task):
         write_log(2, " -- Remove task # %d" % task.id)
@@ -270,9 +288,11 @@ class PlanGenerator:
         write_log(2, " -- Add machine # %d" % machine.id)
         self.machines_external.append(machine)
         self.machines.append(machine.clone())
+        self.check_pending_tasks()
 
     def remove_machine(self, machine):
         write_log(2, " -- Remove machine # %d" % machine.id)
         self.machines_external.remove(machine)
         self.machines[:] = [machine.clone() for machine in self.machines_external]
         # There is no simple way to just remove cloned machine
+        self.check_pending_tasks()

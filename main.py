@@ -3,7 +3,7 @@ from itertools import count
 import argparse
 import time
 from statistics import mean, variance
-from math import sqrt, ceil, log
+from math import sqrt, ceil, exp
 from os import path
 
 from plan import WorkPlan
@@ -337,6 +337,12 @@ class Cluster:
 
         return new_machines
 
+    def check_task(self, task):
+        for m in self.machines:
+            if m.check_task(task):
+                return True
+        return False
+
     def get_tasks_cnt(self):
         return sum((len(machine.workload) for machine in self.machines))
 
@@ -593,6 +599,8 @@ if __name__ == "__main__":
 
     stats_list = []
 
+    def f_scalar(t, p): return t**0.5 * p**0.5
+
     for r in range(repeat):
         task_pool = TasksPool(tasks_info)
         task_pool.check_new_tasks(time=0, initial=True)
@@ -601,9 +609,9 @@ if __name__ == "__main__":
 
         generator = None
         if alg_name == 'genetic':
-            generator = GeneticGenerator(cluster.machines, task_pool.tasks, alg_settings)
+            generator = GeneticGenerator(cluster.machines, task_pool.tasks, alg_settings, func=f_scalar)
         elif alg_name == 'simple':
-            generator = SimpleGenerator(cluster.machines, task_pool.tasks, alg_settings)
+            generator = SimpleGenerator(cluster.machines, task_pool.tasks, alg_settings, func=f_scalar)
         else:
             print("Unknown algorithm name")
             exit(1)
@@ -613,14 +621,14 @@ if __name__ == "__main__":
         start = time.time()
         cl_time, price = scheduler.loop()
         end = time.time()
-        cost = log(cl_time) + log(price)
+        cost = f_scalar(cl_time, price)
 
         cl_times.append(cl_time)
         prices.append(price)
         costs.append(cost)
         times.append(end - start)
 
-        write_log(0, "#%3d: Cost: %5.2f" % (r, cost))
+        write_log(0, "#%3d: Cost: %5.2f" % (r, cost), True)
         write_log(1, "#%3d: Time: %8d; Price: %8d; Time: %5.2f" % (r, cl_time, price, end - start))
         stats = scheduler.stats
         stats_list.append(stats)

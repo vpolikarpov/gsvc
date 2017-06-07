@@ -16,10 +16,10 @@ def random_plan(cls, machines, tasks):
     return wp
 
 
-def simple_plan(cls, machines, tasks):
+def simple_plan(cls, machines, tasks, scalar_function):
     machines = machines[:]
     shuffle(machines)
-    sg = SimpleGenerator(machines, tasks, {})
+    sg = SimpleGenerator(machines, tasks, {}, scalar_function)
     wp = cls(sg.make_one_plan())
     return wp
 
@@ -191,8 +191,9 @@ def mutate(machines, tasks, plan, max_exchanges, max_moves):
     return plan,
 
 
-def evaluate(machines_all, tasks, plan):
-    return plan.evaluate(machines_all, tasks)
+def evaluate(machines_all, tasks, scalar_function, plan):
+    time, price = plan.evaluate(machines_all, tasks)
+    return scalar_function(time, price),
 
 
 def select_tournament_unique(individuals, k, tournsize):
@@ -285,20 +286,20 @@ def expand_plan(machines, tasks, plan, new_tasks):
 
 
 class GeneticGenerator (PlanGenerator):
-    def __init__(self, machines, tasks, settings):
-        super().__init__(machines, tasks, settings)
+    def __init__(self, machines, tasks, settings, func):
+        super().__init__(machines, tasks, settings, func)
 
         creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
         creator.create("WorkPlan", WorkPlan, fitness=creator.FitnessMin)
 
         self.toolbox = base.Toolbox()
-        self.toolbox.register("individual", simple_plan, creator.WorkPlan, self.machines, self.tasks)
+        self.toolbox.register("individual", simple_plan, creator.WorkPlan, self.machines, self.tasks, self.scalar)
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
 
         self.toolbox.register("mate", mate, creator.WorkPlan)
         self.toolbox.register("mutate", mutate, self.machines, self.tasks, max_exchanges=1, max_moves=1)
         self.toolbox.register("select", select_tournament_unique, tournsize=3)
-        self.toolbox.register("evaluate", evaluate, self.machines, self.tasks)
+        self.toolbox.register("evaluate", evaluate, self.machines, self.tasks, self.scalar)
 
         self.settings["GEN"] = self.settings.get("GEN", 100)  # generations number
         self.settings["MU"] = self.settings.get("MU", 10)  # generation size
@@ -341,8 +342,7 @@ class GeneticGenerator (PlanGenerator):
         write_log(2, "%6.2f [cnt: %4d; cpu_time: %7.2f]" % (prct[0], len(self.tasks), cpu_time))
 
         if prct[0] < 0:
-            # raise RuntimeWarning("Regression detected")
-            print("Regression detected")
+            write_log(1, "Regression detected")
 
         self.check_population()
 
