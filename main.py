@@ -498,7 +498,6 @@ class Scheduler:
             if exited:
                 exited = False
                 ready = True
-                self.plan_outdated = True
                 for machine in self.cluster.machines:
                     for task in machine.done:
                         self.logger.task_done(
@@ -520,7 +519,7 @@ class Scheduler:
             new_machines = self.cluster.check_new_machines()
             new_tasks = self.tp.check_new_tasks(self.cluster.time)
 
-            if new_tasks or new_machines or deleted_machines:
+            if new_tasks or new_machines:
                 ready = True
                 self.plan_outdated = True
 
@@ -597,6 +596,8 @@ if __name__ == "__main__":
     costs = []
     times = []
 
+    cost_sum = 0
+
     stats_list = []
 
     def f_scalar(t, p): return t**0.5 * p**0.5
@@ -628,7 +629,9 @@ if __name__ == "__main__":
         costs.append(cost)
         times.append(end - start)
 
-        write_log(0, "#%3d: Cost: %5.2f" % (r, cost), True)
+        cost_sum += cost
+
+        write_log(0, "#%3d: Cost: %5.2f [temp avg: %5.2f ]" % (r, cost, cost_sum/(r+1)), True)
         write_log(1, "#%3d: Time: %8d; Price: %8d; Time: %5.2f" % (r, cl_time, price, end - start))
         stats = scheduler.stats
         stats_list.append(stats)
