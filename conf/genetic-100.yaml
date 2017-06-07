@@ -1,33 +1,33 @@
 ---
 machines:
   own:
-    - memory: 64
+    - cpu: 8
+      memory: 16
       disk: 32
-      cpu: 128
-    - memory: 32
+    - cpu: 32
+      memory: 32
       disk: 32
-      cpu: 32
-    - memory: 128
+    - cpu: 16
+      memory: 16
       disk: 20
-      cpu: 64
-    - memory: 64
-      disk: 128
-      cpu: 16
+    - cpu: 4
+      memory: 16
+      disk: 32
   remote:
     initial: 6
     limit: 0
     params:
       - cpu: 16
-        disk: 100
+        disk: 50
         memory: 32
-        quantity: 1
+        quantity: 2
       - cpu: 128
         disk: 100
         memory: 128
         quantity: 1
       - cpu: 64
         disk: 50
-        memory: 16
+        memory: 64
         quantity: 1
       - cpu: 16
         disk: 200
@@ -71,7 +71,7 @@ algorithm:
   name: genetic
   settings:
     continuous: False
-    GEN: 100
+    GEN: 50
     MU: 10
     LAMBDA: 20
     C_PROBABILITY: 0.4
