@@ -552,6 +552,7 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--repeat', metavar='R', type=int, help='Repeat simulation R times')
     parser.add_argument('-d', '--draw', dest='draw', action='store_true', help='Draw log (ignored when R > 1)')
     parser.add_argument('-l', '--log', dest='log', action='store_true', help='Enable text logging')
+    parser.add_argument('-o', '--output', metavar='file', default='', help='File for results')
     parser.add_argument('-v', dest='verbose', action='store_true', help='Verbose mode')
     parser.add_argument('-vv', '--verbose', dest='verbose2', action='store_true', help='Too verbose mode')
 
@@ -670,17 +671,28 @@ if __name__ == "__main__":
                     stats[key] += s[key]
 
         write_log(0, "---------------------")
-        write_log(0, "          Число машин: ср: %5.2f, макс: %4d, макс уср: %6.2f" %
-                  (stats['machine-time']/stats['time'], stats['machines-max'], stats['machines-max-sum']/repeat))
-        write_log(0, "Число задач на машине: ср: %5.2f, макс: %4d, макс уср: %6.2f" %
-                  (stats['tasks-time']/stats['machine-time'], stats['tasks-on-machine-max'], stats['tasks-on-machine-max-sum']/repeat))
-        write_log(0, "Время ожидания задачи: ср: %5.2f, макс: %4d, макс уср: %6.2f" %
-                  (stats['waiting']/stats['tasks'], stats['waiting-max'], stats['waiting-max-sum']/repeat))
-        write_log(0, "Средняя загруженность машин: %2d%%" % (100*stats['occupancy-sum']/stats['machine-time']))
-        write_log(0, "Простои: %4.2f%%" % (100*stats['downtime-remote']/stats['machine-time-remote']))
 
-        write_log(0, "---------------------")
-        write_log(0, "Mean cluster time: %8d; mean price: %8d; mean cost: %5.2f; mean time: %5.2f" %
-                  (mean(cl_times), mean(prices), mean(costs), mean(times)))
-        write_log(0, "         variance: %8d;   variance: %8d;  variance: %5.2f;  variance: %5.2f" %
-                  (sqrt(variance(cl_times)), sqrt(variance(prices)), sqrt(variance(costs)), sqrt(variance(times))))
+        stats_text = ""
+        stats_text += ("          Число машин: ср: %5.2f, макс: %4d, макс уср: %6.2f\n" %
+                       (stats['machine-time']/stats['time'], stats['machines-max'], stats['machines-max-sum']/repeat))
+
+        stats_text += ("Число задач на машине: ср: %5.2f, макс: %4d, макс уср: %6.2f\n" %
+                       (stats['tasks-time']/stats['machine-time'], stats['tasks-on-machine-max'], stats['tasks-on-machine-max-sum']/repeat))
+        stats_text += ("Время ожидания задачи: ср: %5.2f, макс: %4d, макс уср: %6.2f\n" %
+                       (stats['waiting']/stats['tasks'], stats['waiting-max'], stats['waiting-max-sum']/repeat))
+        stats_text += ("Средняя загруженность машин: %2d%%\n" %
+                       (100*stats['occupancy-sum']/stats['machine-time']))
+        stats_text += ("Простои: %4.2f%%\n" %
+                       (100*stats['downtime-remote']/stats['machine-time-remote']))
+
+        stats_text += "---------------------"
+        stats_text += ("Mean cluster time: %8d; mean price: %8d; mean cost: %5.2f; mean time: %5.2f\n" %
+                       (mean(cl_times), mean(prices), mean(costs), mean(times)))
+        stats_text += ("         variance: %8d;   variance: %8d;  variance: %5.2f;  variance: %5.2f\n" %
+                       (sqrt(variance(cl_times)), sqrt(variance(prices)), sqrt(variance(costs)), sqrt(variance(times))))
+
+        if args.output != '':
+            out_file = open(args.output, 'w')
+            out_file.write(stats_text)
+            out_file.close()
+        write_log(0, stats_text)
