@@ -71,7 +71,7 @@ def mate(cls, plan1, plan2):
                     "pos2": part_pos_2,
                 })
                 part_data = [tid]
-                part_pos_1 = (mid, idx)
+                part_pos_1 = (mid, idx + 1)
                 part_pos_2 = plan2.get_task_pos(tid)
 
         parts.append({
